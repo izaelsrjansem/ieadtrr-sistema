@@ -7,6 +7,7 @@ import type { SystemRole } from '../types'
 const roleLabels: Record<SystemRole, string> = {
   pendente: 'Pendente de aprovação',
   visitante: 'Visitante',
+  congregado: 'Congregado',
   membro: 'Membro',
   diretoria: 'Diretoria',
   admin: 'Administração',

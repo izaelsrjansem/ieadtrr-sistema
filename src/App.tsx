@@ -5,15 +5,21 @@ import {
   Check,
   CheckCircle2,
   Clock,
+  Building2,
   Flame,
   FileText,
   Home,
   LayoutDashboard,
   LockKeyhole,
   LogOut,
+  MapPinned,
   MapPin,
   Megaphone,
+  Navigation,
+  Pencil,
+  PlusCircle,
   ScrollText,
+  Trash2,
   UserPlus,
   UsersRound,
   X,
@@ -25,7 +31,7 @@ import { useAuth } from './context/AuthContext'
 import {
   churchDisplayName,
   churchRoleOptions,
-  congregations,
+  congregations as fallbackCongregations,
   homeAnnouncements,
   leadership,
   personTypeOptions,
@@ -41,9 +47,42 @@ import {
   publicChurchPrinciples,
 } from './data/institutional'
 import { isFirebaseConfigured, sendPasswordReset, signIn, signOutUser, signUp } from './services/auth'
+import {
+  createCongregation,
+  subscribeCongregations,
+  suppressCongregation,
+  updateCongregation,
+  type CongregationInput,
+} from './services/congregations'
 import { decideMembershipRequest, subscribeMembershipRequests } from './services/membership'
-import { getUserProfile, subscribeUsers, updateUserRole, updateVisitorCongregacao } from './services/users'
-import type { FirestoreDate, MembershipRequest, MembershipRequestStatus, SystemRole, UserProfile } from './types'
+import {
+  getUserProfile,
+  promoteCongregadoToMembro,
+  promoteVisitorToCongregado,
+  subscribeUsers,
+  updateMemberChurchRole,
+  updateUserRole,
+  updateVisitorCongregacao,
+} from './services/users'
+import {
+  createNominalVisitRecord,
+  subscribeUserVisitRecords,
+  subscribeVisitRecords,
+  upsertVisitRecord,
+} from './services/visitRecords'
+import type {
+  Congregation,
+  CongregationCategory,
+  FirestoreDate,
+  ChurchRole,
+  MembershipRequest,
+  MembershipRequestStatus,
+  SystemRole,
+  UserProfile,
+  VisitRecord,
+  VisitSession,
+  VisitPersonType,
+} from './types'
 
 const announcementIcons = {
   flame: Flame,
@@ -54,12 +93,13 @@ const announcementIcons = {
 const systemRoleLabels: Record<SystemRole, string> = {
   pendente: 'Pendente',
   visitante: 'Visitante',
+  congregado: 'Congregado',
   membro: 'Membro',
   diretoria: 'Diretoria',
   admin: 'Administrador',
 }
 
-const assignableRoles: SystemRole[] = ['pendente', 'membro', 'diretoria', 'admin']
+const assignableRoles: SystemRole[] = ['pendente', 'congregado', 'membro', 'diretoria', 'admin']
 
 const requestStatusFilters: Array<{ value: MembershipRequestStatus | 'todos'; label: string }> = [
   { value: 'pendente', label: 'Pendentes' },
@@ -67,6 +107,29 @@ const requestStatusFilters: Array<{ value: MembershipRequestStatus | 'todos'; la
   { value: 'rejeitado', label: 'Rejeitados' },
   { value: 'todos', label: 'Todos' },
 ]
+
+const congregationCategoryLabels: Record<CongregationCategory, string> = {
+  capital_sede: 'Igreja da capital',
+  capital_filial: 'Filial na capital',
+  interior_filial: 'Filial no interior',
+}
+
+const congregationAreaFilters: Array<{ value: 'todas' | 'capital' | 'interior'; label: string }> = [
+  { value: 'todas', label: 'Todas' },
+  { value: 'capital', label: 'Capital' },
+  { value: 'interior', label: 'Interior' },
+]
+
+const visitTypeLabels: Record<VisitPersonType, string> = {
+  visitante: 'Visitante',
+  convidado: 'Convidado',
+}
+
+const visitSessionLabels: Record<VisitSession, string> = {
+  regular: 'Visita do dia',
+  ebd: 'Escola bíblica dominical',
+  culto_noite: 'Culto à noite',
+}
 
 function firestoreDateValue(value?: FirestoreDate): number {
   if (!value) {
@@ -82,12 +145,28 @@ function formatFirestoreDate(value?: FirestoreDate): string {
   return time ? new Date(time).toLocaleDateString('pt-BR') : '—'
 }
 
-function congregacaoLabel(id: string): string {
-  if (!id) {
-    return 'Não informada'
+function formatFirestoreTime(value?: FirestoreDate): string {
+  const time = firestoreDateValue(value)
+  return time ? new Date(time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'
+}
+
+function todayKey(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function isSunday(dateKey: string): boolean {
+  return new Date(`${dateKey}T12:00:00`).getDay() === 0
+}
+
+function visitSessionsForDate(dateKey: string): Array<{ value: VisitSession; label: string }> {
+  if (isSunday(dateKey)) {
+    return [
+      { value: 'ebd', label: visitSessionLabels.ebd },
+      { value: 'culto_noite', label: visitSessionLabels.culto_noite },
+    ]
   }
 
-  return congregations.find((congregation) => congregation.id === id)?.nome ?? id
+  return [{ value: 'regular', label: visitSessionLabels.regular }]
 }
 
 function profilePanelPath(profile: UserProfile | null): string {
@@ -107,11 +186,46 @@ function profilePanelPath(profile: UserProfile | null): string {
     return '/visitante'
   }
 
+  if (profile.role === 'congregado') {
+    return '/congregado'
+  }
+
   if (profile.role === 'membro' || profile.tipoPessoa === 'membro') {
     return '/membro'
   }
 
   return '/cadastro'
+}
+
+function hasCoordinates(congregation?: Congregation | null): congregation is Congregation & {
+  latitude: number
+  longitude: number
+} {
+  return typeof congregation?.latitude === 'number' && typeof congregation.longitude === 'number'
+}
+
+function CongregationMiniMap({ congregation }: { congregation?: Congregation | null }) {
+  if (!hasCoordinates(congregation)) {
+    return (
+      <div className="mini-map empty-map">
+        <MapPinned aria-hidden="true" />
+        <span>Geolocalização ainda não informada.</span>
+      </div>
+    )
+  }
+
+  const delta = 0.01
+  const { latitude, longitude } = congregation
+  const bbox = `${longitude - delta}%2C${latitude - delta}%2C${longitude + delta}%2C${latitude + delta}`
+
+  return (
+    <iframe
+      className="mini-map"
+      title={`Mapa - ${congregation.nome}`}
+      src={`https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${latitude}%2C${longitude}`}
+      loading="lazy"
+    />
+  )
 }
 
 const navItems = [
@@ -157,6 +271,14 @@ function App() {
             element={
               <ProtectedRoute allowedRoles={['visitante']}>
                 <VisitorPanel />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/congregado"
+            element={
+              <ProtectedRoute allowedRoles={['congregado']}>
+                <CongregadoPanel />
               </ProtectedRoute>
             }
           />
@@ -537,6 +659,12 @@ function CreateAccessPanel() {
 }
 
 function CongregationsPage() {
+  const [congregationList, setCongregationList] = useState<Congregation[]>(fallbackCongregations)
+
+  useEffect(() => subscribeCongregations(setCongregationList), [])
+
+  const activeCongregations = congregationList.filter((congregation) => congregation.ativa !== false)
+
   return (
     <section className="content-section">
       <div className="section-heading">
@@ -544,13 +672,15 @@ function CongregationsPage() {
         <h1>Campos de atendimento</h1>
       </div>
       <div className="card-grid">
-        {congregations.map((congregation) => (
+        {activeCongregations.map((congregation) => (
           <article className="info-card" key={congregation.id}>
             <MapPin aria-hidden="true" />
             <h2>{congregation.nome}</h2>
+            <span>{congregationCategoryLabels[congregation.categoria ?? 'capital_filial']}</span>
             <p>{congregation.endereco}</p>
             <span>{congregation.pastorResponsavel}</span>
             <span>{congregation.telefone}</span>
+            <CongregationMiniMap congregation={congregation} />
           </article>
         ))}
       </div>
@@ -762,28 +892,71 @@ function MemberDashboard() {
 
 function VisitorPanel() {
   const { firebaseUser, profile } = useAuth()
-  const [congregacao, setCongregacao] = useState('')
+  const [congregationList, setCongregationList] = useState<Congregation[]>(fallbackCongregations)
+  const [records, setRecords] = useState<VisitRecord[]>([])
+  const [congregationId, setCongregationId] = useState('')
+  const [visitType, setVisitType] = useState<VisitPersonType>('visitante')
+  const [convidadoPor, setConvidadoPor] = useState('')
+  const [session, setSession] = useState<VisitSession>(visitSessionsForDate(todayKey())[0].value)
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [initialized, setInitialized] = useState(false)
 
+  const visitDate = todayKey()
+  const sessionOptions = visitSessionsForDate(visitDate)
+  const activeCongregations = congregationList.filter((congregation) => congregation.ativa !== false)
+  const selectedCongregation = activeCongregations.find((congregation) => congregation.id === congregationId)
+  const existingRecord = records.find((record) => record.visitDate === visitDate && record.session === session)
+
+  useEffect(() => subscribeCongregations(setCongregationList), [])
+
+  useEffect(() => {
+    if (!firebaseUser) {
+      return undefined
+    }
+
+    return subscribeUserVisitRecords(firebaseUser.uid, setRecords)
+  }, [firebaseUser])
+
   useEffect(() => {
     if (profile && !initialized) {
-      setCongregacao(profile.congregacao ?? '')
+      setCongregationId(profile.congregacao ?? '')
+      setVisitType(profile.tipoPessoa === 'convidado' ? 'convidado' : 'visitante')
+      setConvidadoPor(profile.convidadoPor ?? '')
       setInitialized(true)
     }
   }, [profile, initialized])
 
+  useEffect(() => {
+    if (existingRecord) {
+      setCongregationId(existingRecord.congregationId)
+      setVisitType(existingRecord.tipoPessoa)
+      setConvidadoPor(existingRecord.convidadoPor ?? '')
+      setStatus('idle')
+    }
+  }, [existingRecord])
+
   async function handleSave(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    if (!firebaseUser) {
+    if (!firebaseUser || !profile || !selectedCongregation) {
       return
     }
 
     setStatus('saving')
 
     try {
-      await updateVisitorCongregacao(firebaseUser.uid, congregacao)
+      await upsertVisitRecord({
+        userId: firebaseUser.uid,
+        nomeCompleto: profile.nomeCompleto ?? firebaseUser.email ?? 'Visitante',
+        tipoPessoa: visitType,
+        convidadoPor: visitType === 'convidado' ? convidadoPor.trim() : undefined,
+        congregationId,
+        congregationName: selectedCongregation.nome,
+        visitDate,
+        session,
+        source: 'self',
+      })
+      await updateVisitorCongregacao(firebaseUser.uid, congregationId)
       setStatus('saved')
     } catch {
       setStatus('error')
@@ -797,37 +970,128 @@ function VisitorPanel() {
       <DashboardHeader title={`Olá, ${profile?.nomeCompleto ?? 'visitante'}`} subtitle={`Acesso de ${tipoLabel.toLowerCase()}`} />
       <form className="visitor-panel" onSubmit={handleSave}>
         <div className="section-heading">
-          <p className="eyebrow">Sua visita</p>
-          <h2>Congregação que está visitando</h2>
-          <p>Atualize sempre que estiver visitando uma congregação diferente.</p>
+          <p className="eyebrow">Registro de presença</p>
+          <h2>Informe sua presença de hoje</h2>
+          <p>Você pode alterar o registro do dia. Aos domingos, há um registro para EBD e outro para o culto à noite.</p>
         </div>
 
-        <label>
-          Congregação
-          <select
-            value={congregacao}
-            onChange={(event) => {
-              setCongregacao(event.target.value)
-              setStatus('idle')
-            }}
-          >
-            <option value="">Selecione</option>
-            {congregations.map((congregation) => (
-              <option key={congregation.id} value={congregation.id}>
-                {congregation.nome}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="form-grid">
+          <label>
+            Tipo
+            <select
+              value={visitType}
+              onChange={(event) => {
+                setVisitType(event.target.value as VisitPersonType)
+                setStatus('idle')
+              }}
+            >
+              <option value="visitante">Visitante</option>
+              <option value="convidado">Convidado</option>
+            </select>
+          </label>
 
-        <button className="primary-action" type="submit" disabled={status === 'saving' || !congregacao}>
-          {status === 'saving' ? 'Salvando...' : 'Salvar congregação'}
+          <label>
+            Culto/atividade
+            <select
+              value={session}
+              onChange={(event) => {
+                setSession(event.target.value as VisitSession)
+                setStatus('idle')
+              }}
+            >
+              {sessionOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {visitType === 'convidado' ? (
+            <label className="wide-field">
+              Convidado por
+              <input
+                value={convidadoPor}
+                onChange={(event) => {
+                  setConvidadoPor(event.target.value)
+                  setStatus('idle')
+                }}
+                placeholder="Nome de quem fez o convite"
+              />
+            </label>
+          ) : null}
+
+          <label className="wide-field">
+            Igreja/congregação
+            <select
+              value={congregationId}
+              onChange={(event) => {
+                setCongregationId(event.target.value)
+                setStatus('idle')
+              }}
+            >
+              <option value="">Selecione</option>
+              {activeCongregations.map((congregation) => (
+                <option key={congregation.id} value={congregation.id}>
+                  {congregation.nome}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <CongregationMiniMap congregation={selectedCongregation} />
+
+        <div className="presence-slots">
+          {sessionOptions.map((option) => {
+            const saved = records.find((record) => record.visitDate === visitDate && record.session === option.value)
+            return (
+              <button
+                className={session === option.value ? 'active' : undefined}
+                key={option.value}
+                onClick={() => setSession(option.value)}
+                type="button"
+              >
+                <span>{option.label}</span>
+                <strong>{saved ? 'Registrado' : 'Disponível'}</strong>
+              </button>
+            )
+          })}
+        </div>
+
+        <button
+          className="primary-action"
+          type="submit"
+          disabled={status === 'saving' || !congregationId || (visitType === 'convidado' && !convidadoPor.trim())}
+        >
+          {status === 'saving' ? 'Salvando...' : existingRecord ? 'Alterar registro' : 'Registrar presença'}
           <CheckCircle2 aria-hidden="true" />
         </button>
 
-        {status === 'saved' ? <div className="form-alert success">Congregação atualizada.</div> : null}
+        {status === 'saved' ? <div className="form-alert success">Registro de presença salvo.</div> : null}
         {status === 'error' ? <div className="form-alert error">Não foi possível salvar. Tente novamente.</div> : null}
       </form>
+    </section>
+  )
+}
+
+function CongregadoPanel() {
+  const { profile } = useAuth()
+
+  return (
+    <section className="content-section dashboard-page">
+      <DashboardHeader
+        title={`Olá, ${profile?.nomeCompleto ?? 'congregado'}`}
+        subtitle="Complete seu cadastro de congregado"
+      />
+      <div className="admin-panel-block">
+        <div className="section-heading">
+          <p className="eyebrow">Congregado</p>
+          <h2>Dados necessários para acompanhamento</h2>
+          <p>Preencha os dados completos. O batismo e a promoção para membro serão registrados pela administração.</p>
+        </div>
+        <RegistrationForm fixedTipoPessoa="congregado" />
+      </div>
     </section>
   )
 }
@@ -891,8 +1155,12 @@ function AdminDashboard() {
         <AdminItem title="Permissões" value="Membro, diretoria e admin" />
         <AdminItem title="Configurações" value="Dados públicos do site" />
       </div>
+      <AdminPresenceRegistration />
+      <VisitorTracking />
       <AdminNominalRegistration />
       <MembershipApprovals />
+      <CongregationManager />
+      <ProfileProgressionManager />
       <UserAccessManager />
       <BannerManager />
       <div className="table-panel">
@@ -918,6 +1186,141 @@ function AdminDashboard() {
   )
 }
 
+function AdminPresenceRegistration() {
+  const { firebaseUser } = useAuth()
+  const [congregationList, setCongregationList] = useState<Congregation[]>(fallbackCongregations)
+  const [nomeCompleto, setNomeCompleto] = useState('')
+  const [visitType, setVisitType] = useState<VisitPersonType>('visitante')
+  const [convidadoPor, setConvidadoPor] = useState('')
+  const [congregationId, setCongregationId] = useState('')
+  const [visitDate, setVisitDate] = useState(todayKey())
+  const [session, setSession] = useState<VisitSession>(visitSessionsForDate(todayKey())[0].value)
+  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [error, setError] = useState('')
+
+  const sessionOptions = visitSessionsForDate(visitDate)
+  const activeCongregations = congregationList.filter((congregation) => congregation.ativa !== false)
+  const selectedCongregation = activeCongregations.find((congregation) => congregation.id === congregationId)
+
+  useEffect(() => subscribeCongregations(setCongregationList), [])
+
+  useEffect(() => {
+    const allowed = visitSessionsForDate(visitDate)
+    if (!allowed.some((option) => option.value === session)) {
+      setSession(allowed[0].value)
+    }
+  }, [visitDate, session])
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setStatus('saving')
+    setError('')
+
+    if (!firebaseUser || !selectedCongregation || !nomeCompleto.trim()) {
+      setStatus('error')
+      setError('Informe o nome e a igreja da presença.')
+      return
+    }
+
+    if (visitType === 'convidado' && !convidadoPor.trim()) {
+      setStatus('error')
+      setError('Informe quem convidou.')
+      return
+    }
+
+    try {
+      await createNominalVisitRecord({
+        recordedBy: firebaseUser.uid,
+        nomeCompleto: nomeCompleto.trim(),
+        tipoPessoa: visitType,
+        convidadoPor: visitType === 'convidado' ? convidadoPor.trim() : undefined,
+        congregationId,
+        congregationName: selectedCongregation.nome,
+        visitDate,
+        session,
+      })
+      setNomeCompleto('')
+      setConvidadoPor('')
+      setStatus('saved')
+    } catch {
+      setStatus('error')
+      setError('Não foi possível registrar a presença.')
+    }
+  }
+
+  return (
+    <section className="admin-panel-block">
+      <div className="section-heading">
+        <p className="eyebrow">Presenças</p>
+        <h2>Registrar presença sem login</h2>
+        <p>Lançamento rápido para visitante ou convidado que ainda não tem acesso ao sistema.</p>
+      </div>
+
+      {error ? <div className="form-alert error">{error}</div> : null}
+      {status === 'saved' ? <div className="form-alert success">Presença registrada.</div> : null}
+
+      <form className="congregation-editor" onSubmit={handleSubmit}>
+        <div className="form-grid">
+          <label>
+            Nome
+            <input value={nomeCompleto} onChange={(event) => setNomeCompleto(event.target.value)} />
+          </label>
+
+          <label>
+            Tipo
+            <select value={visitType} onChange={(event) => setVisitType(event.target.value as VisitPersonType)}>
+              <option value="visitante">Visitante</option>
+              <option value="convidado">Convidado</option>
+            </select>
+          </label>
+
+          {visitType === 'convidado' ? (
+            <label>
+              Convidado por
+              <input value={convidadoPor} onChange={(event) => setConvidadoPor(event.target.value)} />
+            </label>
+          ) : null}
+
+          <label>
+            Data
+            <input type="date" value={visitDate} onChange={(event) => setVisitDate(event.target.value)} />
+          </label>
+
+          <label>
+            Culto/atividade
+            <select value={session} onChange={(event) => setSession(event.target.value as VisitSession)}>
+              {sessionOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="wide-field">
+            Igreja/congregação
+            <select value={congregationId} onChange={(event) => setCongregationId(event.target.value)}>
+              <option value="">Selecione</option>
+              {activeCongregations.map((congregation) => (
+                <option key={congregation.id} value={congregation.id}>
+                  {congregation.nome}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <CongregationMiniMap congregation={selectedCongregation} />
+
+        <button className="primary-action" type="submit" disabled={status === 'saving'}>
+          <CheckCircle2 aria-hidden="true" />
+          {status === 'saving' ? 'Salvando...' : 'Registrar presença'}
+        </button>
+      </form>
+    </section>
+  )
+}
+
 function AdminNominalRegistration() {
   const [open, setOpen] = useState(false)
 
@@ -936,6 +1339,292 @@ function AdminNominalRegistration() {
       </div>
 
       {open ? <RegistrationForm mode="admin" /> : null}
+    </section>
+  )
+}
+
+type CongregationFormState = {
+  nome: string
+  tipo: 'sede' | 'congregacao'
+  categoria: CongregationCategory
+  endereco: string
+  pastorResponsavel: string
+  telefone: string
+  latitude: string
+  longitude: string
+}
+
+const emptyCongregationForm: CongregationFormState = {
+  nome: '',
+  tipo: 'congregacao',
+  categoria: 'capital_filial',
+  endereco: '',
+  pastorResponsavel: '',
+  telefone: '',
+  latitude: '',
+  longitude: '',
+}
+
+function congregationFormToInput(form: CongregationFormState): CongregationInput {
+  return {
+    nome: form.nome.trim(),
+    tipo: form.tipo,
+    categoria: form.categoria,
+    endereco: form.endereco.trim(),
+    pastorResponsavel: form.pastorResponsavel.trim(),
+    telefone: form.telefone.trim(),
+    latitude: form.latitude ? Number(form.latitude) : undefined,
+    longitude: form.longitude ? Number(form.longitude) : undefined,
+    ativa: true,
+  }
+}
+
+function CongregationManager() {
+  const [items, setItems] = useState<Congregation[]>(fallbackCongregations)
+  const [form, setForm] = useState<CongregationFormState>(emptyCongregationForm)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [areaFilter, setAreaFilter] = useState<'todas' | 'capital' | 'interior'>('todas')
+  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [error, setError] = useState('')
+
+  useEffect(() => subscribeCongregations(setItems), [])
+
+  const selectedMapCongregation: Congregation = {
+    id: editingId ?? 'preview',
+    ...congregationFormToInput(form),
+  }
+  const filteredItems = items.filter((congregation) => {
+    if (areaFilter === 'todas') {
+      return true
+    }
+
+    const category = congregation.categoria ?? 'capital_filial'
+    if (areaFilter === 'capital') {
+      return category === 'capital_sede' || category === 'capital_filial'
+    }
+
+    return category === 'interior_filial'
+  })
+
+  function updateForm<K extends keyof CongregationFormState>(field: K, value: CongregationFormState[K]) {
+    setForm((current) => ({ ...current, [field]: value }))
+    setStatus('idle')
+  }
+
+  function resetForm() {
+    setForm(emptyCongregationForm)
+    setEditingId(null)
+    setStatus('idle')
+    setError('')
+  }
+
+  function editCongregation(congregation: Congregation) {
+    setEditingId(congregation.id)
+    setForm({
+      nome: congregation.nome,
+      tipo: congregation.tipo,
+      categoria: congregation.categoria ?? 'capital_filial',
+      endereco: congregation.endereco,
+      pastorResponsavel: congregation.pastorResponsavel,
+      telefone: congregation.telefone,
+      latitude: typeof congregation.latitude === 'number' ? String(congregation.latitude) : '',
+      longitude: typeof congregation.longitude === 'number' ? String(congregation.longitude) : '',
+    })
+    setStatus('idle')
+    setError('')
+  }
+
+  function useCurrentLocation() {
+    if (!navigator.geolocation) {
+      setError('O navegador não liberou geolocalização.')
+      return
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        updateForm('latitude', position.coords.latitude.toFixed(6))
+        updateForm('longitude', position.coords.longitude.toFixed(6))
+      },
+      () => setError('Não foi possível obter a localização atual.'),
+    )
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setStatus('saving')
+    setError('')
+
+    if (!form.nome.trim() || !form.endereco.trim()) {
+      setStatus('error')
+      setError('Informe pelo menos o nome e o endereço da igreja.')
+      return
+    }
+
+    if ((form.latitude && Number.isNaN(Number(form.latitude))) || (form.longitude && Number.isNaN(Number(form.longitude)))) {
+      setStatus('error')
+      setError('Latitude e longitude precisam ser números válidos.')
+      return
+    }
+
+    try {
+      const payload = congregationFormToInput(form)
+      if (editingId) {
+        await updateCongregation(editingId, payload)
+      } else {
+        await createCongregation(payload)
+      }
+      resetForm()
+      setStatus('saved')
+    } catch {
+      setStatus('error')
+      setError('Não foi possível salvar a congregação. Confira as regras do Firestore.')
+    }
+  }
+
+  async function handleSuppress(id: string) {
+    setStatus('saving')
+    setError('')
+
+    try {
+      await suppressCongregation(id)
+      if (editingId === id) {
+        resetForm()
+      }
+      setStatus('saved')
+    } catch {
+      setStatus('error')
+      setError('Não foi possível suprimir a congregação.')
+    }
+  }
+
+  return (
+    <section className="admin-panel-block">
+      <div className="section-heading">
+        <p className="eyebrow">Igrejas</p>
+        <h2>Cadastro de congregações</h2>
+        <p>Inclua, edite ou suprima igrejas. O visitante escolhe apenas a igreja; a classificação fica aqui.</p>
+      </div>
+
+      {error ? <div className="form-alert error">{error}</div> : null}
+      {status === 'saved' ? <div className="form-alert success">Congregação atualizada.</div> : null}
+
+      <form className="congregation-editor" onSubmit={handleSubmit}>
+        <div className="form-grid">
+          <label>
+            Nome da igreja
+            <input value={form.nome} onChange={(event) => updateForm('nome', event.target.value)} />
+          </label>
+
+          <label>
+            Classificação
+            <select
+              value={form.categoria}
+              onChange={(event) => updateForm('categoria', event.target.value as CongregationCategory)}
+            >
+              {Object.entries(congregationCategoryLabels).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Tipo interno
+            <select value={form.tipo} onChange={(event) => updateForm('tipo', event.target.value as 'sede' | 'congregacao')}>
+              <option value="sede">Sede</option>
+              <option value="congregacao">Congregação</option>
+            </select>
+          </label>
+
+          <label>
+            Telefone
+            <input value={form.telefone} onChange={(event) => updateForm('telefone', event.target.value)} />
+          </label>
+
+          <label className="wide-field">
+            Endereço
+            <input value={form.endereco} onChange={(event) => updateForm('endereco', event.target.value)} />
+          </label>
+
+          <label>
+            Responsável
+            <input value={form.pastorResponsavel} onChange={(event) => updateForm('pastorResponsavel', event.target.value)} />
+          </label>
+
+          <label>
+            Latitude
+            <input value={form.latitude} onChange={(event) => updateForm('latitude', event.target.value)} inputMode="decimal" />
+          </label>
+
+          <label>
+            Longitude
+            <input value={form.longitude} onChange={(event) => updateForm('longitude', event.target.value)} inputMode="decimal" />
+          </label>
+        </div>
+
+        <div className="editor-actions">
+          <button className="secondary-admin-action" type="button" onClick={useCurrentLocation}>
+            <Navigation aria-hidden="true" />
+            Usar localização atual
+          </button>
+          <button className="primary-action" type="submit" disabled={status === 'saving'}>
+            <PlusCircle aria-hidden="true" />
+            {editingId ? 'Salvar alteração' : 'Adicionar igreja'}
+          </button>
+          {editingId ? (
+            <button className="secondary-admin-action" type="button" onClick={resetForm}>
+              <X aria-hidden="true" />
+              Cancelar
+            </button>
+          ) : null}
+        </div>
+      </form>
+
+      <CongregationMiniMap congregation={selectedMapCongregation} />
+
+      <div className="congregation-list-heading">
+        <div>
+          <strong>Igrejas cadastradas</strong>
+          <span>{filteredItems.length} exibida(s) de {items.length}</span>
+        </div>
+        <div className="segmented-filter" aria-label="Filtrar igrejas por localidade">
+          {congregationAreaFilters.map((filter) => (
+            <button
+              className={areaFilter === filter.value ? 'active' : undefined}
+              key={filter.value}
+              onClick={() => setAreaFilter(filter.value)}
+              type="button"
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="managed-congregations">
+        {filteredItems.map((congregation) => (
+          <article className={congregation.ativa === false ? 'inactive' : undefined} key={congregation.id}>
+            <Building2 aria-hidden="true" />
+            <div>
+              <strong>{congregation.nome}</strong>
+              <span>{congregationCategoryLabels[congregation.categoria ?? 'capital_filial']}</span>
+              <p>{congregation.endereco}</p>
+            </div>
+            <button className="secondary-admin-action" type="button" onClick={() => editCongregation(congregation)}>
+              <Pencil aria-hidden="true" />
+              Editar
+            </button>
+            {congregation.ativa === false ? null : (
+              <button className="reject-btn" type="button" onClick={() => handleSuppress(congregation.id)}>
+                <Trash2 aria-hidden="true" />
+                Suprimir
+              </button>
+            )}
+          </article>
+        ))}
+        {filteredItems.length === 0 ? <p className="source-note">Nenhuma igreja encontrada neste filtro.</p> : null}
+      </div>
     </section>
   )
 }
@@ -1090,6 +1779,184 @@ function MembershipApprovals() {
   )
 }
 
+function hasCongregadoRequiredData(user: UserProfile): boolean {
+  return Boolean(
+    user.cpf &&
+      user.rg &&
+      user.telefone &&
+      user.dataNascimento &&
+      user.dataAceitacao &&
+      user.endereco?.rua &&
+      user.endereco?.numero &&
+      user.endereco?.bairro &&
+      user.endereco?.cidade &&
+      user.endereco?.estado,
+  )
+}
+
+function ProfileProgressionManager() {
+  const [users, setUsers] = useState<UserProfile[]>([])
+  const [loading, setLoading] = useState(true)
+  const [busyUid, setBusyUid] = useState<string | null>(null)
+  const [error, setError] = useState('')
+  const [baptismDates, setBaptismDates] = useState<Record<string, string>>({})
+  const [cargoByUid, setCargoByUid] = useState<Record<string, ChurchRole | ''>>({})
+  const [otherCargoByUid, setOtherCargoByUid] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    const unsubscribe = subscribeUsers(
+      (items) => {
+        setUsers(items)
+        setLoading(false)
+      },
+      () => {
+        setError('Não foi possível carregar os perfis.')
+        setLoading(false)
+      },
+    )
+
+    return unsubscribe
+  }, [])
+
+  const visible = users
+    .filter((user) => ['visitante', 'congregado', 'membro'].includes(user.role))
+    .sort((a, b) => a.nomeCompleto.localeCompare(b.nomeCompleto, 'pt-BR'))
+
+  async function runAction(uid: string, action: () => Promise<void>) {
+    setBusyUid(uid)
+    setError('')
+
+    try {
+      await action()
+    } catch {
+      setError('Não foi possível atualizar este perfil.')
+    } finally {
+      setBusyUid(null)
+    }
+  }
+
+  return (
+    <section className="admin-panel-block">
+      <div className="section-heading">
+        <p className="eyebrow">Perfis</p>
+        <h2>Progressão espiritual e cargos</h2>
+        <p>Promova visitante/convidado para congregado, congregado para membro e membro para função ministerial.</p>
+      </div>
+
+      {error ? <div className="form-alert error">{error}</div> : null}
+
+      {loading ? (
+        <p className="source-note">Carregando perfis...</p>
+      ) : visible.length === 0 ? (
+        <p className="source-note">Nenhum perfil elegível no momento.</p>
+      ) : (
+        <div className="progression-list">
+          {visible.map((user) => {
+            const isCongregadoComplete = hasCongregadoRequiredData(user)
+            const selectedCargo = cargoByUid[user.uid] ?? user.cargo ?? ''
+            const currentOtherCargo = otherCargoByUid[user.uid] ?? user.outroCargo ?? ''
+
+            return (
+              <article className="progression-row" key={user.uid}>
+                <div>
+                  <strong>{user.nomeCompleto}</strong>
+                  <span>{user.email}</span>
+                  <span className={`status-badge status-${user.role}`}>{systemRoleLabels[user.role]}</span>
+                </div>
+
+                {user.role === 'visitante' ? (
+                  <button
+                    className="primary-action"
+                    disabled={busyUid === user.uid}
+                    onClick={() => runAction(user.uid, () => promoteVisitorToCongregado(user.uid))}
+                    type="button"
+                  >
+                    Tornar congregado
+                  </button>
+                ) : null}
+
+                {user.role === 'congregado' ? (
+                  <div className="progression-actions">
+                    <span className={isCongregadoComplete ? 'ready-note' : 'pending-note'}>
+                      {isCongregadoComplete ? 'Dados completos' : 'Aguardando dados completos do usuário'}
+                    </span>
+                    <label>
+                      Data de batismo
+                      <input
+                        type="date"
+                        value={baptismDates[user.uid] ?? ''}
+                        onChange={(event) =>
+                          setBaptismDates((current) => ({ ...current, [user.uid]: event.target.value }))
+                        }
+                      />
+                    </label>
+                    <button
+                      className="primary-action"
+                      disabled={busyUid === user.uid || !isCongregadoComplete || !baptismDates[user.uid]}
+                      onClick={() => runAction(user.uid, () => promoteCongregadoToMembro(user.uid, baptismDates[user.uid]))}
+                      type="button"
+                    >
+                      Promover a membro
+                    </button>
+                  </div>
+                ) : null}
+
+                {user.role === 'membro' ? (
+                  <div className="progression-actions">
+                    <label>
+                      Cargo/função
+                      <select
+                        value={selectedCargo}
+                        onChange={(event) =>
+                          setCargoByUid((current) => ({ ...current, [user.uid]: event.target.value as ChurchRole | '' }))
+                        }
+                      >
+                        <option value="">Sem cargo</option>
+                        {churchRoleOptions.map((role) => (
+                          <option key={role.value} value={role.value}>
+                            {role.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {selectedCargo === 'outro' ? (
+                      <label>
+                        Especificar
+                        <input
+                          value={currentOtherCargo}
+                          onChange={(event) =>
+                            setOtherCargoByUid((current) => ({ ...current, [user.uid]: event.target.value }))
+                          }
+                        />
+                      </label>
+                    ) : null}
+                    <button
+                      className="primary-action"
+                      disabled={busyUid === user.uid || (selectedCargo === 'outro' && !currentOtherCargo.trim())}
+                      onClick={() =>
+                        runAction(user.uid, () =>
+                          updateMemberChurchRole(
+                            user.uid,
+                            selectedCargo || undefined,
+                            selectedCargo === 'outro' ? currentOtherCargo : undefined,
+                          ),
+                        )
+                      }
+                      type="button"
+                    >
+                      Salvar função
+                    </button>
+                  </div>
+                ) : null}
+              </article>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function UserAccessManager() {
   const { firebaseUser } = useAuth()
   const [users, setUsers] = useState<UserProfile[]>([])
@@ -1182,100 +2049,117 @@ function UserAccessManager() {
 }
 
 function VisitorTracking() {
-  const [users, setUsers] = useState<UserProfile[]>([])
-  const [nominalRequests, setNominalRequests] = useState<MembershipRequest[]>([])
+  const [records, setRecords] = useState<VisitRecord[]>([])
+  const [congregationList, setCongregationList] = useState<Congregation[]>(fallbackCongregations)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [dateFilter, setDateFilter] = useState('')
+  const [congregationFilter, setCongregationFilter] = useState('todos')
+  const [categoryFilter, setCategoryFilter] = useState<CongregationCategory | 'todos'>('todos')
 
   useEffect(() => {
-    let usersLoaded = false
-    let requestsLoaded = false
+    let recordsLoaded = false
+    let congregationsLoaded = false
 
     function finishLoading() {
-      if (usersLoaded && requestsLoaded) {
+      if (recordsLoaded && congregationsLoaded) {
         setLoading(false)
       }
     }
 
-    const unsubscribeUsers = subscribeUsers(
+    const unsubscribeRecords = subscribeVisitRecords(
       (items) => {
-        setUsers(items)
-        usersLoaded = true
+        setRecords(items)
+        recordsLoaded = true
         finishLoading()
       },
       () => {
-        setError('Não foi possível carregar o acompanhamento.')
-        usersLoaded = true
+        setError('Não foi possível carregar os registros de presença.')
+        recordsLoaded = true
         finishLoading()
       },
     )
 
-    const unsubscribeRequests = subscribeMembershipRequests(
+    const unsubscribeCongregations = subscribeCongregations(
       (items) => {
-        setNominalRequests(items)
-        requestsLoaded = true
+        setCongregationList(items)
+        congregationsLoaded = true
         finishLoading()
       },
       () => {
-        setError('Não foi possível carregar todos os registros nominais.')
-        requestsLoaded = true
+        setError('Não foi possível carregar as congregações.')
+        congregationsLoaded = true
         finishLoading()
       },
     )
 
     return () => {
-      unsubscribeUsers()
-      unsubscribeRequests()
+      unsubscribeRecords()
+      unsubscribeCongregations()
     }
   }, [])
 
-  const tracked = [
-    ...users
-      .filter((user) => user.role === 'visitante')
-      .map((user) => ({
-        id: `user-${user.uid}`,
-        nomeCompleto: user.nomeCompleto,
-        tipoPessoa: user.tipoPessoa,
-        congregacao: user.congregacao,
-        convidadoPor: user.convidadoPor,
-        telefone: user.telefone,
-        email: user.email,
-        createdAt: user.createdAt,
-      })),
-    ...nominalRequests
-      .filter((request) => request.tipoPessoa !== 'membro')
-      .map((request) => ({
-        id: `nominal-${request.id}`,
-        nomeCompleto: request.nomeCompleto,
-        tipoPessoa: request.tipoPessoa,
-        congregacao: request.congregacao,
-        convidadoPor: request.convidadoPor,
-        telefone: request.telefone,
-        email: request.email,
-        createdAt: request.createdAt,
-      })),
-  ].sort((a, b) => firestoreDateValue(b.createdAt) - firestoreDateValue(a.createdAt))
+  const congregationById = new Map(congregationList.map((congregation) => [congregation.id, congregation]))
 
-  const totalVisitantes = tracked.filter((user) => user.tipoPessoa !== 'convidado').length
-  const totalConvidados = tracked.filter((user) => user.tipoPessoa === 'convidado').length
+  const filteredRecords = records
+    .filter((record) => (dateFilter ? record.visitDate === dateFilter : true))
+    .filter((record) => (congregationFilter === 'todos' ? true : record.congregationId === congregationFilter))
+    .filter((record) => {
+      if (categoryFilter === 'todos') {
+        return true
+      }
 
-  const porCongregacao = Object.entries(
-    tracked.reduce<Record<string, number>>((acc, user) => {
-      const key = user.congregacao || ''
-      acc[key] = (acc[key] ?? 0) + 1
-      return acc
-    }, {}),
-  ).sort((a, b) => b[1] - a[1])
+      return congregationById.get(record.congregationId)?.categoria === categoryFilter
+    })
+    .sort((a, b) => firestoreDateValue(b.registeredAt) - firestoreDateValue(a.registeredAt))
+
+  const totalVisitantes = filteredRecords.filter((record) => record.tipoPessoa === 'visitante').length
+  const totalConvidados = filteredRecords.filter((record) => record.tipoPessoa === 'convidado').length
+  const selectedMapCongregation =
+    congregationFilter !== 'todos'
+      ? congregationById.get(congregationFilter)
+      : congregationById.get(filteredRecords[0]?.congregationId ?? '')
 
   return (
     <section className="admin-panel-block">
       <div className="section-heading">
-        <p className="eyebrow">Acompanhamento</p>
-        <h2>Visitantes e convidados</h2>
-        <p>Registro para acompanhamento da diretoria. Não passam por aprovação.</p>
+        <p className="eyebrow">Dashboard</p>
+        <h2>Análise de presenças</h2>
+        <p>Registros nominais de visitantes e convidados, por data, culto e igreja.</p>
       </div>
 
       {error ? <div className="form-alert error">{error}</div> : null}
+
+      <div className="tracking-filters">
+        <label>
+          Data
+          <input type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} />
+        </label>
+        <label>
+          Classificação
+          <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value as CongregationCategory | 'todos')}>
+            <option value="todos">Todas</option>
+            {Object.entries(congregationCategoryLabels).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Igreja
+          <select value={congregationFilter} onChange={(event) => setCongregationFilter(event.target.value)}>
+            <option value="todos">Todas</option>
+            {congregationList
+              .filter((congregation) => congregation.ativa !== false)
+              .map((congregation) => (
+                <option key={congregation.id} value={congregation.id}>
+                  {congregation.nome}
+                </option>
+              ))}
+          </select>
+        </label>
+      </div>
 
       <div className="tracking-metrics">
         <div>
@@ -1287,28 +2171,17 @@ function VisitorTracking() {
           <strong>{totalConvidados}</strong>
         </div>
         <div>
-          <span>Total</span>
-          <strong>{tracked.length}</strong>
+          <span>Registros</span>
+          <strong>{filteredRecords.length}</strong>
         </div>
       </div>
 
-      {porCongregacao.length > 0 ? (
-        <div className="tracking-by-cong">
-          <p className="doc-title">Por congregação</p>
-          <div className="cong-chips">
-            {porCongregacao.map(([id, count]) => (
-              <span key={id || 'nao-informada'}>
-                {congregacaoLabel(id)} <b>{count}</b>
-              </span>
-            ))}
-          </div>
-        </div>
-      ) : null}
+      <CongregationMiniMap congregation={selectedMapCongregation} />
 
       {loading ? (
-        <p className="source-note">Carregando acompanhamento...</p>
-      ) : tracked.length === 0 ? (
-        <p className="source-note">Nenhum visitante ou convidado registrado ainda.</p>
+        <p className="source-note">Carregando registros...</p>
+      ) : filteredRecords.length === 0 ? (
+        <p className="source-note">Nenhuma presença registrada para os filtros atuais.</p>
       ) : (
         <div className="table-panel">
           <table>
@@ -1316,23 +2189,28 @@ function VisitorTracking() {
               <tr>
                 <th>Nome</th>
                 <th>Tipo</th>
-                <th>Congregação</th>
-                <th>Convidado por</th>
-                <th>Contato</th>
                 <th>Data</th>
+                <th>Hora</th>
+                <th>Culto</th>
+                <th>Igreja</th>
+                <th>Classificação</th>
               </tr>
             </thead>
             <tbody>
-              {tracked.map((user) => (
-                <tr key={user.id}>
-                  <td>{user.nomeCompleto}</td>
-                  <td>{user.tipoPessoa === 'convidado' ? 'Convidado' : 'Visitante'}</td>
-                  <td>{congregacaoLabel(user.congregacao ?? '')}</td>
-                  <td>{user.tipoPessoa === 'convidado' ? user.convidadoPor || '—' : '—'}</td>
-                  <td>{user.telefone || user.email || '—'}</td>
-                  <td>{formatFirestoreDate(user.createdAt)}</td>
-                </tr>
-              ))}
+              {filteredRecords.map((record) => {
+                const congregation = congregationById.get(record.congregationId)
+                return (
+                  <tr key={record.id}>
+                    <td>{record.nomeCompleto}</td>
+                    <td>{visitTypeLabels[record.tipoPessoa]}</td>
+                    <td>{new Date(`${record.visitDate}T12:00:00`).toLocaleDateString('pt-BR')}</td>
+                    <td>{formatFirestoreTime(record.registeredAt)}</td>
+                    <td>{visitSessionLabels[record.session]}</td>
+                    <td>{congregation?.nome ?? record.congregationName}</td>
+                    <td>{congregationCategoryLabels[congregation?.categoria ?? 'capital_filial']}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

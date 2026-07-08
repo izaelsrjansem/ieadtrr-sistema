@@ -1,4 +1,5 @@
-export type PublicPersonType = 'visitante' | 'membro' | 'convidado'
+export type PublicPersonType = 'visitante' | 'membro' | 'convidado' | 'congregado'
+export type VisitPersonType = 'visitante' | 'convidado'
 
 export type ChurchRole =
   | 'pastor'
@@ -19,7 +20,7 @@ export type ChurchRole =
   | 'lider_louvor'
   | 'outro'
 
-export type SystemRole = 'pendente' | 'visitante' | 'membro' | 'diretoria' | 'admin'
+export type SystemRole = 'pendente' | 'visitante' | 'congregado' | 'membro' | 'diretoria' | 'admin'
 
 export type UserProfile = {
   uid: string
@@ -32,6 +33,22 @@ export type UserProfile = {
   convidadoPor?: string
   telefone?: string
   dataNascimento?: string
+  possuiWhatsapp?: boolean
+  cpf?: string
+  rg?: string
+  endereco?: Address
+  dataAceitacao?: string
+  dataBatismo?: string
+  possuiCargo?: boolean
+  cargo?: ChurchRole
+  outroCargo?: string
+  fotoModo?: 'unica' | 'frente_verso'
+  fotoArquivo?: string
+  fotoVersoArquivo?: string
+  cartaMudancaPaginas?: DocumentoPaginas
+  cartaMudancaArquivo?: string
+  cartaRecomendacaoPaginas?: DocumentoPaginas
+  cartaRecomendacaoArquivo?: string
   observacoes?: string
   updatedAt?: FirestoreDate
 }
@@ -89,13 +106,39 @@ export type MembershipRequest = MemberRegistration & {
   decididoPor?: string
 }
 
+export type CongregationCategory = 'capital_sede' | 'capital_filial' | 'interior_filial'
+
 export type Congregation = {
   id: string
   nome: string
   tipo: 'sede' | 'congregacao'
+  categoria?: CongregationCategory
   endereco: string
   pastorResponsavel: string
   telefone: string
+  latitude?: number
+  longitude?: number
+  ativa?: boolean
+  createdAt?: FirestoreDate
+  updatedAt?: FirestoreDate
+}
+
+export type VisitSession = 'regular' | 'ebd' | 'culto_noite'
+
+export type VisitRecord = {
+  id: string
+  userId: string
+  nomeCompleto: string
+  tipoPessoa: VisitPersonType
+  convidadoPor?: string
+  congregationId: string
+  congregationName: string
+  visitDate: string
+  session: VisitSession
+  source?: 'self' | 'admin'
+  recordedBy?: string
+  registeredAt?: FirestoreDate
+  updatedAt?: FirestoreDate
 }
 
 export type ChurchEvent = {

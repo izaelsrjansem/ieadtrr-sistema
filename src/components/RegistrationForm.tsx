@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, FileUp, Send, ShieldCheck, UserRound } from 'lucide-react'
 import { z } from 'zod'
 import { useAuth } from '../context/AuthContext'
-import { churchRoleOptions, congregations, logradouroOptions, personTypeOptions } from '../data/church'
+import { churchRoleOptions, congregations as fallbackCongregations, logradouroOptions, personTypeOptions } from '../data/church'
 import { submitMembershipRequest } from '../services/membership'
-import { completeVisitorProfile, markMemberRegistrationProfile } from '../services/users'
-import type { ChurchRole, MemberRegistration } from '../types'
+import { subscribeCongregations } from '../services/congregations'
+import { completeCongregadoProfile, completeVisitorProfile, markMemberRegistrationProfile } from '../services/users'
+import type { ChurchRole, Congregation, MemberRegistration, PublicPersonType } from '../types'
 
 function onlyDigits(value: string): string {
   return value.replace(/\D/g, '')
@@ -107,7 +108,7 @@ const registrationSchema = z
     cpf: z.string(),
     rg: z.string(),
     dataNascimento: z.string(),
-    tipoPessoa: z.enum(['visitante', 'membro', 'convidado']),
+    tipoPessoa: z.enum(['visitante', 'membro', 'convidado', 'congregado']),
     possuiCargo: z.boolean(),
     cargo: z.string().optional(),
     outroCargo: z.string().optional(),
@@ -169,7 +170,7 @@ const registrationSchema = z
       })
     }
 
-    if (data.tipoPessoa === 'membro') {
+    if (data.tipoPessoa === 'membro' || data.tipoPessoa === 'congregado') {
       if (!isValidCpf(data.cpf)) {
         ctx.addIssue({ code: 'custom', path: ['cpf'], message: 'Informe um CPF válido.' })
       }
@@ -202,6 +203,10 @@ const registrationSchema = z
         ctx.addIssue({ code: 'custom', path: ['endereco', 'estado'], message: 'Informe o estado.' })
       }
 
+      if (data.tipoPessoa === 'congregado' && !data.dataAceitacao) {
+        ctx.addIssue({ code: 'custom', path: ['dataAceitacao'], message: 'Informe a data de aceitação.' })
+      }
+
       if (data.dataBatismo) {
         const age = ageBetween(data.dataNascimento, data.dataBatismo)
         if (age !== null && age < 12) {
@@ -213,11 +218,15 @@ const registrationSchema = z
         }
       }
 
-      if (data.possuiCargo && !data.cargo) {
+      if (data.tipoPessoa === 'congregado' && data.possuiCargo) {
+        ctx.addIssue({ code: 'custom', path: ['possuiCargo'], message: 'Cargo/função é permitido somente para membro batizado.' })
+      }
+
+      if (data.tipoPessoa === 'membro' && data.possuiCargo && !data.cargo) {
         ctx.addIssue({ code: 'custom', path: ['cargo'], message: 'Selecione a função/cargo.' })
       }
 
-      if (data.possuiCargo && data.cargo === 'outro' && !data.outroCargo?.trim()) {
+      if (data.tipoPessoa === 'membro' && data.possuiCargo && data.cargo === 'outro' && !data.outroCargo?.trim()) {
         ctx.addIssue({ code: 'custom', path: ['outroCargo'], message: 'Especifique a outra função.' })
       }
     }
@@ -227,6 +236,7 @@ type ErrorMap = Record<string, string>
 
 type RegistrationFormProps = {
   mode?: 'self' | 'admin'
+  fixedTipoPessoa?: PublicPersonType
 }
 
 const initialForm: MemberRegistration = {
@@ -283,7 +293,7 @@ function fileNames(files: FileList | null): string {
     .join(', ')
 }
 
-export function RegistrationForm({ mode = 'self' }: RegistrationFormProps) {
+export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: RegistrationFormProps) {
   const { firebaseUser, profile } = useAuth()
   const isAdminMode = mode === 'admin'
   const accountEmail = isAdminMode ? '' : (firebaseUser?.email ?? profile?.email ?? '')
@@ -293,9 +303,14 @@ export function RegistrationForm({ mode = 'self' }: RegistrationFormProps) {
   const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle')
   const [lastProtocol, setLastProtocol] = useState<string>('')
   const [cepStatus, setCepStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [congregationList, setCongregationList] = useState<Congregation[]>(fallbackCongregations)
 
   const isMembro = form.tipoPessoa === 'membro'
+  const isCongregado = form.tipoPessoa === 'congregado'
+  const isFullCadastro = isMembro || isCongregado
+  const canAdminAssignCargo = isAdminMode && isMembro
   const isConvidado = form.tipoPessoa === 'convidado'
+  const activeCongregations = congregationList.filter((congregation) => congregation.ativa !== false)
 
   const selectedRoleLabel = useMemo(() => {
     if (!form.cargo) {
@@ -322,10 +337,15 @@ export function RegistrationForm({ mode = 'self' }: RegistrationFormProps) {
       dataNascimento: current.dataNascimento || profile?.dataNascimento || '',
       congregacao: current.congregacao || profile?.congregacao || '',
       tipoPessoa:
-        profile?.tipoPessoa === 'visitante' || profile?.tipoPessoa === 'convidado'
+        profile?.tipoPessoa === 'visitante' || profile?.tipoPessoa === 'convidado' || profile?.tipoPessoa === 'congregado'
           ? profile.tipoPessoa
           : current.tipoPessoa,
       convidadoPor: current.convidadoPor || profile?.convidadoPor || '',
+      cpf: current.cpf || profile?.cpf || '',
+      rg: current.rg || profile?.rg || '',
+      possuiWhatsapp: current.possuiWhatsapp || profile?.possuiWhatsapp || false,
+      endereco: profile?.endereco ? { ...current.endereco, ...profile.endereco } : current.endereco,
+      dataAceitacao: current.dataAceitacao || profile?.dataAceitacao || '',
       observacoes: current.observacoes || profile?.observacoes || '',
     }))
   }, [
@@ -336,10 +356,51 @@ export function RegistrationForm({ mode = 'self' }: RegistrationFormProps) {
     profile?.congregacao,
     profile?.convidadoPor,
     profile?.dataNascimento,
+    profile?.dataAceitacao,
+    profile?.cpf,
+    profile?.endereco,
     profile?.observacoes,
+    profile?.possuiWhatsapp,
+    profile?.rg,
     profile?.telefone,
     profile?.tipoPessoa,
   ])
+
+  useEffect(() => {
+    if (!fixedTipoPessoa) {
+      return
+    }
+
+    setForm((current) => ({
+      ...current,
+      tipoPessoa: fixedTipoPessoa,
+      possuiCargo: fixedTipoPessoa === 'membro' ? current.possuiCargo : false,
+      cargo: fixedTipoPessoa === 'membro' ? current.cargo : undefined,
+      outroCargo: fixedTipoPessoa === 'membro' ? current.outroCargo : '',
+      dataBatismo: fixedTipoPessoa === 'membro' ? current.dataBatismo : '',
+    }))
+  }, [fixedTipoPessoa])
+
+  useEffect(() => {
+    if (isAdminMode) {
+      return
+    }
+
+    setForm((current) => {
+      if (!current.possuiCargo && !current.cargo && !current.outroCargo) {
+        return current
+      }
+
+      return {
+        ...current,
+        possuiCargo: false,
+        cargo: undefined,
+        outroCargo: '',
+      }
+    })
+  }, [isAdminMode, form.tipoPessoa])
+
+  useEffect(() => subscribeCongregations(setCongregationList), [])
 
   function updateField<K extends keyof MemberRegistration>(field: K, value: MemberRegistration[K]) {
     setForm((current) => ({ ...current, [field]: value }))
@@ -404,7 +465,16 @@ export function RegistrationForm({ mode = 'self' }: RegistrationFormProps) {
     setStatus('sending')
     setErrors({})
 
-    const parsed = registrationSchema.safeParse(form)
+    const formForValidation = isAdminMode
+      ? form
+      : {
+          ...form,
+          possuiCargo: false,
+          cargo: undefined,
+          outroCargo: '',
+        }
+
+    const parsed = registrationSchema.safeParse(formForValidation)
 
     if (!parsed.success) {
       setErrors(mapErrors(parsed.error))
@@ -424,10 +494,25 @@ export function RegistrationForm({ mode = 'self' }: RegistrationFormProps) {
         email: isAdminMode ? parsed.data.email.trim() : accountEmail || parsed.data.email.trim(),
       }
 
+      if (!isAdminMode) {
+        data.possuiCargo = false
+        data.cargo = undefined
+        data.outroCargo = ''
+      }
+
       if (isAdminMode) {
         const result = await submitMembershipRequest(data as MemberRegistration)
         setLastProtocol(result.id)
         setForm(initialForm)
+      } else if (isCongregado) {
+        await completeCongregadoProfile(currentUid, {
+          ...(data as MemberRegistration),
+          tipoPessoa: 'congregado',
+          possuiCargo: false,
+          cargo: undefined,
+          outroCargo: '',
+          dataBatismo: '',
+        })
       } else if (isMembro) {
         const result = await submitMembershipRequest(data as MemberRegistration)
         await markMemberRegistrationProfile(currentUid, {
@@ -478,23 +563,32 @@ export function RegistrationForm({ mode = 'self' }: RegistrationFormProps) {
       <fieldset>
         <legend>Tipo de cadastro</legend>
         <div className="type-picker">
-          {personTypeOptions.map((option) => (
-            <label key={option.value} className={form.tipoPessoa === option.value ? 'active' : undefined}>
-              <input
-                type="radio"
-                name="tipoPessoa"
-                value={option.value}
-                checked={form.tipoPessoa === option.value}
-                onChange={() => updateField('tipoPessoa', option.value)}
-              />
-              {option.label}
+          {fixedTipoPessoa ? (
+            <label className="active">
+              <input type="radio" name="tipoPessoa" value={fixedTipoPessoa} checked readOnly />
+              {fixedTipoPessoa === 'congregado' ? 'Congregado' : fixedTipoPessoa}
             </label>
-          ))}
+          ) : (
+            personTypeOptions.map((option) => (
+              <label key={option.value} className={form.tipoPessoa === option.value ? 'active' : undefined}>
+                <input
+                  type="radio"
+                  name="tipoPessoa"
+                  value={option.value}
+                  checked={form.tipoPessoa === option.value}
+                  onChange={() => updateField('tipoPessoa', option.value)}
+                />
+                {option.label}
+              </label>
+            ))
+          )}
         </div>
         <p className="selection-note">
           {isAdminMode
             ? 'Registro feito pela administração, sem criar acesso de login para a pessoa.'
-            : isMembro
+            : isCongregado
+              ? 'Preencha os dados de congregado. O batismo será informado pela administração quando houver promoção a membro.'
+              : isMembro
               ? 'O cadastro de membro passa por aprovação da administração.'
               : 'Cadastro simples, sem necessidade de documentos.'}
         </p>
@@ -503,7 +597,7 @@ export function RegistrationForm({ mode = 'self' }: RegistrationFormProps) {
       <fieldset>
         <legend>Identificação</legend>
         <div className="form-grid">
-          <label className={isMembro ? undefined : 'wide-field'}>
+          <label className={isFullCadastro ? undefined : 'wide-field'}>
             Nome completo
             <input value={form.nomeCompleto} onChange={(event) => updateField('nomeCompleto', event.target.value)} />
             {fieldError('nomeCompleto')}
@@ -522,7 +616,7 @@ export function RegistrationForm({ mode = 'self' }: RegistrationFormProps) {
             </label>
           ) : null}
 
-          {isMembro ? (
+          {isFullCadastro ? (
             <>
               <label>
                 CPF
@@ -557,14 +651,14 @@ export function RegistrationForm({ mode = 'self' }: RegistrationFormProps) {
             Congregação
             <select value={form.congregacao} onChange={(event) => updateField('congregacao', event.target.value)}>
               <option value="">Selecione</option>
-              {congregations.map((congregation) => (
+              {activeCongregations.map((congregation) => (
                 <option key={congregation.id} value={congregation.id}>
                   {congregation.nome}
                 </option>
               ))}
             </select>
             <small className="field-hint">
-              {isMembro ? 'Congregação que frequenta.' : 'Congregação que está visitando.'}
+              {isFullCadastro ? 'Congregação que frequenta.' : 'Congregação que está visitando.'}
             </small>
             {fieldError('congregacao')}
           </label>
@@ -572,7 +666,7 @@ export function RegistrationForm({ mode = 'self' }: RegistrationFormProps) {
       </fieldset>
 
       <fieldset>
-        <legend>Contato{isMembro ? ' e endereço' : ''}</legend>
+        <legend>Contato{isFullCadastro ? ' e endereço' : ''}</legend>
         <div className="form-grid">
           <label>
             Telefone
@@ -585,7 +679,7 @@ export function RegistrationForm({ mode = 'self' }: RegistrationFormProps) {
             {fieldError('telefone')}
           </label>
 
-          {isMembro ? (
+          {isFullCadastro ? (
             <label className="checkbox-line">
               <input
                 type="checkbox"
@@ -612,7 +706,7 @@ export function RegistrationForm({ mode = 'self' }: RegistrationFormProps) {
             {fieldError('email')}
           </label>
 
-          {isMembro ? (
+          {isFullCadastro ? (
             <>
               <label>
                 CEP
@@ -690,63 +784,86 @@ export function RegistrationForm({ mode = 'self' }: RegistrationFormProps) {
         </div>
       </fieldset>
 
-      {isMembro ? (
+      {isFullCadastro ? (
         <fieldset>
-          <legend>Função eclesiástica na igreja</legend>
+          <legend>{isMembro ? 'Vida cristã e função eclesiástica' : 'Vida cristã'}</legend>
           <div className="form-grid">
-            <label className="checkbox-line wide-field">
-              <input
-                type="checkbox"
-                checked={form.possuiCargo}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    possuiCargo: event.target.checked,
-                    cargo: event.target.checked ? current.cargo : undefined,
-                    outroCargo: event.target.checked ? current.outroCargo : '',
-                  }))
-                }
-              />
-              Possui cargo ou função ministerial
-            </label>
-
-            {form.possuiCargo ? (
+            {canAdminAssignCargo ? (
               <>
-                <label>
-                  Cargo/função
-                  <select
-                    value={form.cargo ?? ''}
-                    onChange={(event) => updateField('cargo', event.target.value as ChurchRole)}
-                  >
-                    <option value="">Selecione</option>
-                    {churchRoleOptions.map((role) => (
-                      <option key={role.value} value={role.value}>
-                        {role.label}
-                      </option>
-                    ))}
-                  </select>
-                  {fieldError('cargo')}
+                <label className="checkbox-line wide-field">
+                  <input
+                    type="checkbox"
+                    checked={form.possuiCargo}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        possuiCargo: event.target.checked,
+                        cargo: event.target.checked ? current.cargo : undefined,
+                        outroCargo: event.target.checked ? current.outroCargo : '',
+                      }))
+                    }
+                  />
+                  Possui cargo ou função ministerial
                 </label>
 
-                {form.cargo === 'outro' ? (
-                  <label>
-                    Especificar função
-                    <input value={form.outroCargo} onChange={(event) => updateField('outroCargo', event.target.value)} />
-                    {fieldError('outroCargo')}
-                  </label>
-                ) : null}
-              </>
-            ) : null}
+                {form.possuiCargo ? (
+                  <>
+                    <label>
+                      Cargo/função
+                      <select
+                        value={form.cargo ?? ''}
+                        onChange={(event) => updateField('cargo', event.target.value as ChurchRole)}
+                      >
+                        <option value="">Selecione</option>
+                        {churchRoleOptions.map((role) => (
+                          <option key={role.value} value={role.value}>
+                            {role.label}
+                          </option>
+                        ))}
+                      </select>
+                      {fieldError('cargo')}
+                    </label>
 
-            <label>
-              Data de batismo
-              <input
-                type="date"
-                value={form.dataBatismo}
-                onChange={(event) => updateField('dataBatismo', event.target.value)}
-              />
-              {fieldError('dataBatismo')}
-            </label>
+                    {form.cargo === 'outro' ? (
+                      <label>
+                        Especificar função
+                        <input value={form.outroCargo} onChange={(event) => updateField('outroCargo', event.target.value)} />
+                        {fieldError('outroCargo')}
+                      </label>
+                    ) : null}
+                  </>
+                ) : null}
+
+                <label>
+                  Data de batismo
+                  <input
+                    type="date"
+                    value={form.dataBatismo}
+                    onChange={(event) => updateField('dataBatismo', event.target.value)}
+                  />
+                  {fieldError('dataBatismo')}
+                </label>
+              </>
+            ) : isMembro ? (
+              <>
+                <p className="selection-note wide-field">
+                  Cargo ou função ministerial será atribuído pela administração após a aprovação do cadastro.
+                </p>
+                <label>
+                  Data de batismo
+                  <input
+                    type="date"
+                    value={form.dataBatismo}
+                    onChange={(event) => updateField('dataBatismo', event.target.value)}
+                  />
+                  {fieldError('dataBatismo')}
+                </label>
+              </>
+            ) : (
+              <p className="selection-note wide-field">
+                Congregado ainda não recebe cargo. A função ministerial só pode ser atribuída após promoção a membro.
+              </p>
+            )}
 
             <label>
               Data de aceitação
@@ -755,14 +872,15 @@ export function RegistrationForm({ mode = 'self' }: RegistrationFormProps) {
                 value={form.dataAceitacao}
                 onChange={(event) => updateField('dataAceitacao', event.target.value)}
               />
+              {fieldError('dataAceitacao')}
             </label>
           </div>
 
-          {selectedRoleLabel ? <p className="selection-note">Função informada: {selectedRoleLabel}</p> : null}
+          {canAdminAssignCargo && selectedRoleLabel ? <p className="selection-note">Função informada: {selectedRoleLabel}</p> : null}
         </fieldset>
       ) : null}
 
-      {isMembro ? (
+      {isFullCadastro ? (
         <fieldset>
           <legend>Documentos</legend>
 

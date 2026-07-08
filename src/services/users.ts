@@ -1,11 +1,11 @@
-import { collection, doc, getDoc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore'
+import { collection, deleteField, doc, getDoc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore'
 import { db } from '../lib/firebase'
-import type { PublicPersonType, SystemRole, UserProfile } from '../types'
+import type { ChurchRole, MemberRegistration, SystemRole, UserProfile, VisitPersonType } from '../types'
 
 type VisitorProfileData = {
   email: string
   nomeCompleto: string
-  tipoPessoa: Exclude<PublicPersonType, 'membro'>
+  tipoPessoa: VisitPersonType
   congregacao: string
   telefone: string
   dataNascimento: string
@@ -20,6 +20,10 @@ type MemberProfileData = {
   congregacao: string
   telefone: string
   dataNascimento: string
+}
+
+type CongregadoProfileData = MemberRegistration & {
+  tipoPessoa: 'congregado'
 }
 
 export function subscribeUsers(
@@ -45,7 +49,22 @@ export async function updateUserRole(uid: string, role: SystemRole): Promise<voi
     throw new Error('Firebase não configurado.')
   }
 
-  await updateDoc(doc(db, 'users', uid), { role })
+  const updates: Record<string, unknown> = {
+    role,
+    updatedAt: serverTimestamp(),
+  }
+
+  if (role === 'congregado') {
+    Object.assign(updates, {
+      tipoPessoa: 'congregado',
+      possuiCargo: false,
+      cargo: deleteField(),
+      outroCargo: '',
+      dataBatismo: '',
+    })
+  }
+
+  await updateDoc(doc(db, 'users', uid), updates)
 }
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {
@@ -67,7 +86,7 @@ export async function updateVisitorCongregacao(uid: string, congregacao: string)
 
 export async function completeVisitorProfile(uid: string, data: VisitorProfileData): Promise<void> {
   if (!db) {
-    throw new Error('Firebase nÃ£o configurado.')
+    throw new Error('Firebase não configurado.')
   }
 
   await updateDoc(doc(db, 'users', uid), {
@@ -77,13 +96,72 @@ export async function completeVisitorProfile(uid: string, data: VisitorProfileDa
   })
 }
 
-export async function markMemberRegistrationProfile(uid: string, data: MemberProfileData): Promise<void> {
+export async function completeCongregadoProfile(uid: string, data: CongregadoProfileData): Promise<void> {
   if (!db) {
-    throw new Error('Firebase nÃ£o configurado.')
+    throw new Error('Firebase não configurado.')
   }
 
   await updateDoc(doc(db, 'users', uid), {
     ...data,
+    role: 'congregado',
+    tipoPessoa: 'congregado',
+    possuiCargo: false,
+    cargo: deleteField(),
+    outroCargo: '',
+    dataBatismo: '',
+    updatedAt: serverTimestamp(),
+  })
+}
+
+export async function markMemberRegistrationProfile(uid: string, data: MemberProfileData): Promise<void> {
+  if (!db) {
+    throw new Error('Firebase não configurado.')
+  }
+
+  await updateDoc(doc(db, 'users', uid), {
+    ...data,
+    updatedAt: serverTimestamp(),
+  })
+}
+
+export async function promoteVisitorToCongregado(uid: string): Promise<void> {
+  if (!db) {
+    throw new Error('Firebase não configurado.')
+  }
+
+  await updateDoc(doc(db, 'users', uid), {
+    role: 'congregado',
+    tipoPessoa: 'congregado',
+    possuiCargo: false,
+    cargo: deleteField(),
+    outroCargo: '',
+    dataBatismo: '',
+    updatedAt: serverTimestamp(),
+  })
+}
+
+export async function promoteCongregadoToMembro(uid: string, dataBatismo: string): Promise<void> {
+  if (!db) {
+    throw new Error('Firebase não configurado.')
+  }
+
+  await updateDoc(doc(db, 'users', uid), {
+    role: 'membro',
+    tipoPessoa: 'membro',
+    dataBatismo,
+    updatedAt: serverTimestamp(),
+  })
+}
+
+export async function updateMemberChurchRole(uid: string, cargo?: ChurchRole, outroCargo?: string): Promise<void> {
+  if (!db) {
+    throw new Error('Firebase não configurado.')
+  }
+
+  await updateDoc(doc(db, 'users', uid), {
+    possuiCargo: Boolean(cargo),
+    cargo: cargo ?? deleteField(),
+    outroCargo: cargo === 'outro' ? outroCargo : '',
     updatedAt: serverTimestamp(),
   })
 }

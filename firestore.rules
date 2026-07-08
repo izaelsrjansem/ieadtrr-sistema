@@ -22,6 +22,22 @@ service cloud.firestore {
       return hasRole('diretoria') || isAdmin();
     }
 
+    function protectedProfileFieldsUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['possuiCargo', 'cargo', 'outroCargo', 'dataBatismo']);
+    }
+
+    function selfProfileUpdate() {
+      return request.resource.data.role == resource.data.role
+        && protectedProfileFieldsUnchanged();
+    }
+
+    function selfVisitorActivation() {
+      return resource.data.role == 'pendente'
+        && request.resource.data.role == 'visitante'
+        && protectedProfileFieldsUnchanged();
+    }
+
     match /siteSettings/{document=**} {
       allow read: if true;
       allow write: if isAdmin();
@@ -48,16 +64,26 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    match /visitRecords/{recordId} {
+      allow create: if signedIn()
+        && (request.resource.data.userId == request.auth.uid || isDiretoria());
+      allow read: if signedIn()
+        && (resource.data.userId == request.auth.uid || isDiretoria());
+      allow update: if signedIn()
+        && (
+          (resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid)
+          || isDiretoria()
+        );
+      allow delete: if isAdmin();
+    }
+
     match /users/{userId} {
       allow create: if (signedIn() && request.auth.uid == userId
           && request.resource.data.role == 'pendente')
         || isAdmin();
       allow read: if signedIn() && (request.auth.uid == userId || isDiretoria());
       allow update: if (signedIn() && request.auth.uid == userId
-          && (
-            request.resource.data.role == resource.data.role
-            || (resource.data.role == 'pendente' && request.resource.data.role == 'visitante')
-          ))
+          && (selfProfileUpdate() || selfVisitorActivation()))
         || isAdmin();
       allow delete: if isAdmin();
     }
