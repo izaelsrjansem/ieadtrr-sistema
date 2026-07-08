@@ -1,0 +1,88 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function hasRole(role) {
+      return signedIn() && userProfile().data.role == role;
+    }
+
+    function isAdmin() {
+      return hasRole('admin');
+    }
+
+    function isDiretoria() {
+      return hasRole('diretoria') || isAdmin();
+    }
+
+    match /siteSettings/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /congregations/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /events/{document=**} {
+      allow read: if true;
+      allow write: if isDiretoria();
+    }
+
+    match /announcements/{document=**} {
+      allow read: if signedIn();
+      allow write: if isDiretoria();
+    }
+
+    match /membershipRequests/{requestId} {
+      allow create: if signedIn();
+      allow read: if isDiretoria();
+      allow update, delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow create: if (signedIn() && request.auth.uid == userId
+          && request.resource.data.role == 'pendente')
+        || isAdmin();
+      allow read: if signedIn() && (request.auth.uid == userId || isDiretoria());
+      allow update: if (signedIn() && request.auth.uid == userId
+          && (
+            request.resource.data.role == resource.data.role
+            || (resource.data.role == 'pendente' && request.resource.data.role == 'visitante')
+          ))
+        || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /members/{memberId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /serviceSchedules/{document=**} {
+      allow read: if signedIn();
+      allow write: if isDiretoria();
+    }
+
+    match /sermonAssignments/{document=**} {
+      allow read: if signedIn();
+      allow write: if isDiretoria();
+    }
+
+    match /communionSchedules/{document=**} {
+      allow read: if signedIn();
+      allow write: if isDiretoria();
+    }
+
+    match /auditLogs/{document=**} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
