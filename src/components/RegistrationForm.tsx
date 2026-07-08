@@ -514,7 +514,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
           dataBatismo: '',
         })
       } else if (isMembro) {
-        const result = await submitMembershipRequest(data as MemberRegistration)
+        const result = await submitMembershipRequest(data as MemberRegistration, currentUid)
         await markMemberRegistrationProfile(currentUid, {
           email: data.email,
           nomeCompleto: data.nomeCompleto.trim(),

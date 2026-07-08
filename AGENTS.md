@@ -61,7 +61,8 @@ Rotas de área restrita, agora protegidas por autenticação real (ver seção A
 - `/admin`: painel administrativo. Exige perfil admin. Já com funções reais:
   - **Registrar presença sem login** (`AdminPresenceRegistration`): lançamento rápido de presença para visitante/convidado sem conta, gravando em `visitRecords` com `source: 'admin'`.
   - **Dashboard de análise de presenças** (`VisitorTracking`): lê `visitRecords` e mostra visitante/convidado, data, horário registrado, culto/atividade, igreja e classificação da igreja, com filtros por data, classificação e igreja; mostra mapa pequeno pela geolocalização da congregação.
-  - **Aprovar solicitações de membro** (`MembershipApprovals`): lê `membershipRequests` em tempo real **filtrando só `tipoPessoa === 'membro'`** (visitante/convidado não passam por aprovação), com filtros de status e botões Aprovar/Rejeitar que gravam `status`, `decididoEm`, `decididoPor`.
+  - **Aprovar solicitações de membro** (`MembershipApprovals`): lê `membershipRequests` em tempo real **filtrando só `tipoPessoa === 'membro'`** (visitante/convidado não passam por aprovação), com filtros de status e botões Aprovar/Rejeitar. Ao aprovar, uma operação em lote cria/atualiza o registro oficial em `members/{requestId}`, marca a solicitação como aprovada e promove para membro a conta vinculada por `userId` ou pelo mesmo e-mail. Contas de diretoria/admin preservam o perfil de acesso.
+  - **Cadastro oficial de membros** (`MemberDirectory`): lista em tempo real a coleção `members`, mostra total de ativos e permite buscar por nome, congregação, e-mail ou telefone. CPF e RG não são exibidos na listagem.
   - **Cadastro nominal administrativo** (`AdminNominalRegistration`): ferramenta recolhível dentro do `/admin` para registrar visitante, convidado ou membro **sem criar login e senha** para a pessoa. Usa `RegistrationForm mode="admin"` e grava em `membershipRequests`.
   - **Cadastro de congregações** (`CongregationManager`): permite ao admin incluir, editar e suprimir igrejas/congregações, informando classificação (`Igreja da capital`, `Filial na capital`, `Filial no interior`), endereço, responsável, telefone, latitude e longitude. A lista de igrejas no admin tem filtro em botões `Todas`, `Capital` e `Interior`. A supressão marca `ativa: false`.
   - **Progressão espiritual e cargos** (`ProfileProgressionManager`): lista visitantes/convidados, congregados e membros. Admin promove visitante/convidado para congregado, congregado para membro informando data de batismo, e atribui/remove cargo somente em perfil de membro.
@@ -320,6 +321,8 @@ Concluído:
 - Promoção congregado → membro implementada no `/admin`, exigindo data de batismo informada pelo administrador.
 - Cargo/função ministerial passou a ser atribuído apenas pelo admin e apenas para perfil `membro`; o formulário do usuário comum não oferece mais escolha de cargo.
 - `firestore.rules` agora bloqueia alteração própria de `possuiCargo`, `cargo`, `outroCargo` e `dataBatismo`, mantendo esses campos sob responsabilidade administrativa.
+- Aprovação de membro agora cria o registro oficial em `members`, vincula a solicitação ao acesso e promove automaticamente a conta correspondente. Novas solicitações de usuário autenticado guardam também o `userId`; solicitações antigas continuam sendo vinculadas pelo e-mail.
+- Painel admin ganhou a relação **Membros da igreja**, alimentada em tempo real por `src/services/members.ts`, com total de ativos e busca.
 - Verificação executada: `pnpm build` passou; `pnpm lint` passou com o aviso antigo de Fast Refresh em `src/context/AuthContext.tsx`.
 
 Pendente imediato:
@@ -346,11 +349,10 @@ Próximo:
 
 ## Próximas prioridades
 
-1. Ao aprovar uma solicitação, gerar o registro oficial em `members` (hoje só marca `status`).
-2. Vincular solicitação aprovada a um acesso: quando a pessoa também tiver conta em `users` (mesmo e-mail), facilitar a promoção do perfil.
-3. Criar o Storage e persistir fotos e documentos (inclusive as fotos do banner).
-4. Trocar dados demonstrativos dos painéis `/membro` e `/diretoria` por dados reais.
-5. Página pública de agenda/eventos alimentada pelo Firestore (`events`).
+1. Republicar `firestore.rules` e testar o fluxo real de aprovação, criação em `members` e promoção do acesso.
+2. Criar o Storage e persistir fotos e documentos (inclusive as fotos do banner).
+3. Trocar dados demonstrativos dos painéis `/membro` e `/diretoria` por dados reais.
+4. Página pública de agenda/eventos alimentada pelo Firestore (`events`).
 
 ## Cuidados
 

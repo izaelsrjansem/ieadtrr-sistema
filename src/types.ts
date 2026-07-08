@@ -100,10 +100,23 @@ export type FirestoreDate = { toDate: () => Date } | string
 
 export type MembershipRequest = MemberRegistration & {
   id: string
+  userId?: string
   status: MembershipRequestStatus
   createdAt?: FirestoreDate
   decididoEm?: FirestoreDate
   decididoPor?: string
+  linkedUserUid?: string
+}
+
+export type OfficialMember = MemberRegistration & {
+  id: string
+  userId?: string
+  membershipRequestId?: string
+  status: 'ativo' | 'inativo'
+  createdAt?: FirestoreDate
+  updatedAt?: FirestoreDate
+  approvedAt?: FirestoreDate
+  approvedBy?: string
 }
 
 export type CongregationCategory = 'capital_sede' | 'capital_filial' | 'interior_filial'

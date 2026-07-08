@@ -54,6 +54,7 @@ import {
   updateCongregation,
   type CongregationInput,
 } from './services/congregations'
+import { subscribeMembers } from './services/members'
 import { decideMembershipRequest, subscribeMembershipRequests } from './services/membership'
 import {
   getUserProfile,
@@ -77,6 +78,7 @@ import type {
   ChurchRole,
   MembershipRequest,
   MembershipRequestStatus,
+  OfficialMember,
   SystemRole,
   UserProfile,
   VisitRecord,
@@ -148,6 +150,15 @@ function formatFirestoreDate(value?: FirestoreDate): string {
 function formatFirestoreTime(value?: FirestoreDate): string {
   const time = firestoreDateValue(value)
   return time ? new Date(time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'
+}
+
+function formatDateKey(value?: string): string {
+  if (!value) {
+    return '—'
+  }
+
+  const date = new Date(`${value}T12:00:00`)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('pt-BR')
 }
 
 function todayKey(): string {
@@ -1159,6 +1170,7 @@ function AdminDashboard() {
       <VisitorTracking />
       <AdminNominalRegistration />
       <MembershipApprovals />
+      <MemberDirectory />
       <CongregationManager />
       <ProfileProgressionManager />
       <UserAccessManager />
@@ -1635,6 +1647,7 @@ function MembershipApprovals() {
   const [filter, setFilter] = useState<MembershipRequestStatus | 'todos'>('pendente')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -1668,16 +1681,26 @@ function MembershipApprovals() {
     return personTypeOptions.find((option) => option.value === request.tipoPessoa)?.label ?? request.tipoPessoa
   }
 
-  async function decide(id: string, status: 'aprovado' | 'rejeitado') {
+  async function decide(request: MembershipRequest, status: 'aprovado' | 'rejeitado') {
     if (!firebaseUser) {
       return
     }
 
-    setBusyId(id)
+    setBusyId(request.id)
     setError('')
+    setNotice('')
 
     try {
-      await decideMembershipRequest(id, status, firebaseUser.uid)
+      const result = await decideMembershipRequest(request, status, firebaseUser.uid)
+      if (status === 'aprovado') {
+        setNotice(
+          result.linkedUserUid
+            ? 'Membro oficial criado e acesso promovido para membro.'
+            : 'Membro oficial criado. Nenhum acesso com este e-mail foi encontrado para vincular.',
+        )
+      } else {
+        setNotice('Solicitação rejeitada.')
+      }
     } catch {
       setError('Não foi possível atualizar a solicitação.')
     } finally {
@@ -1720,6 +1743,7 @@ function MembershipApprovals() {
       </div>
 
       {error ? <div className="form-alert error">{error}</div> : null}
+      {notice ? <div className="form-alert success">{notice}</div> : null}
 
       {loading ? (
         <p className="source-note">Carregando solicitações...</p>
@@ -1753,7 +1777,7 @@ function MembershipApprovals() {
                     <button
                       className="approve-btn"
                       disabled={busyId === request.id}
-                      onClick={() => decide(request.id, 'aprovado')}
+                      onClick={() => decide(request, 'aprovado')}
                       type="button"
                     >
                       <Check aria-hidden="true" />
@@ -1762,7 +1786,7 @@ function MembershipApprovals() {
                     <button
                       className="reject-btn"
                       disabled={busyId === request.id}
-                      onClick={() => decide(request.id, 'rejeitado')}
+                      onClick={() => decide(request, 'rejeitado')}
                       type="button"
                     >
                       <X aria-hidden="true" />
@@ -1773,6 +1797,98 @@ function MembershipApprovals() {
               </article>
             )
           })}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function MemberDirectory() {
+  const [members, setMembers] = useState<OfficialMember[]>([])
+  const [search, setSearch] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    return subscribeMembers(
+      (items) => {
+        setMembers(items)
+        setLoading(false)
+      },
+      () => {
+        setError('Não foi possível carregar o cadastro oficial de membros.')
+        setLoading(false)
+      },
+    )
+  }, [])
+
+  const normalizedSearch = search.trim().toLowerCase()
+  const activeMembers = members
+    .filter((member) => member.status !== 'inativo')
+    .filter((member) => {
+      if (!normalizedSearch) {
+        return true
+      }
+
+      return [member.nomeCompleto, member.congregacao, member.email, member.telefone].some((value) =>
+        value?.toLowerCase().includes(normalizedSearch),
+      )
+    })
+    .sort((a, b) => a.nomeCompleto.localeCompare(b.nomeCompleto, 'pt-BR'))
+
+  return (
+    <section className="admin-panel-block" id="membros-oficiais">
+      <div className="admin-block-heading">
+        <div className="section-heading">
+          <p className="eyebrow">Cadastro oficial</p>
+          <h2>Membros da igreja</h2>
+          <p>Os cadastros entram nesta relação após a aprovação da solicitação.</p>
+        </div>
+        <span className="directory-total">
+          <UsersRound aria-hidden="true" />
+          {members.filter((member) => member.status !== 'inativo').length} ativos
+        </span>
+      </div>
+
+      <label className="directory-search">
+        <span>Buscar membro</span>
+        <input
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Nome, congregação, e-mail ou telefone"
+          type="search"
+          value={search}
+        />
+      </label>
+
+      {error ? <div className="form-alert error">{error}</div> : null}
+
+      {loading ? (
+        <p className="source-note">Carregando membros...</p>
+      ) : activeMembers.length === 0 ? (
+        <p className="source-note">
+          {normalizedSearch ? 'Nenhum membro encontrado nesta busca.' : 'Nenhum membro oficial cadastrado ainda.'}
+        </p>
+      ) : (
+        <div className="request-list">
+          {activeMembers.map((member) => (
+            <article className="request-card" key={member.id}>
+              <div className="request-main">
+                <div className="request-head">
+                  <strong>{member.nomeCompleto}</strong>
+                  <span className="status-badge status-aprovado">ativo</span>
+                </div>
+                <div className="request-meta">
+                  <span>{member.congregacao || 'Congregação não informada'}</span>
+                  <span>Batismo: {formatDateKey(member.dataBatismo)}</span>
+                </div>
+                <div className="request-contact">
+                  <span>{member.email || 'Sem e-mail'}</span>
+                  <span>{member.telefone || 'Sem telefone'}</span>
+                  <span>Aprovado em {formatFirestoreDate(member.approvedAt)}</span>
+                </div>
+              </div>
+            </article>
+          ))}
         </div>
       )}
     </section>
