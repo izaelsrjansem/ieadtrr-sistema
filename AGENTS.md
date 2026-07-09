@@ -252,8 +252,9 @@ Estado atual:
 
 - `.env` (na raiz, ignorado pelo git) preenchido com as 6 chaves `VITE_FIREBASE_*` do app web. `isFirebaseConfigured` = true.
 - **Authentication**: ativo, provedor **E-mail/senha** habilitado.
-- **Firestore**: banco criado em produção, região `southamerica-east1` (São Paulo). Regras do `firestore.rules` **publicadas manualmente** pelo console (aba Regras). Testado: `signUp` grava o perfil `pendente` sem erro.
-  - ⚠️ `firestore.rules` foi alterado e **precisa ser republicado no console** para o fluxo novo funcionar: (1) `membershipRequests` exige `signedIn()` no `create` e permite leitura da diretoria; (2) `users` `create` aceita somente o próprio usuário criando `role: 'pendente'`; (3) `users` `update` permite o próprio usuário manter o mesmo `role` ou fazer a transição `pendente` → `visitante`, mas bloqueia alteração própria de `possuiCargo`, `cargo`, `outroCargo` e `dataBatismo`; (4) `users` `read` permite o próprio uid ou diretoria/admin; (5) `visitRecords` permite usuário criar/editar o próprio registro e admin/diretoria ler/lançar presença nominal. Enquanto não republicar, o registro de presença, o dashboard e a progressão de perfis podem falhar.
+- **Firestore**: banco criado em produção, região `southamerica-east1` (São Paulo). A versão atual de `firestore.rules` foi **publicada manualmente em 9 de julho de 2026** pelo console (aba Regras).
+  - Validação após a publicação: o admin conseguiu ler sem erro de permissão as coleções `visitRecords`, `membershipRequests`, `members`, `congregations` e `users`.
+  - Existe uma solicitação aprovada antes da implementação do cadastro oficial. Por isso o painel mostra `1` aprovação antiga e `0` documentos em `members`; esse registro precisa ser migrado ou reaprovado por uma ferramenta de correção.
 - **Storage**: **ainda não criado**. Em projetos novos o Storage pode exigir upgrade para o plano Blaze (pago); por isso foi adiado. Login, cadastro e aprovação de membros funcionam só com o Firestore.
 
 Primeira conta admin: **criada e promovida**. `users/{uid}` do presidente (`izaelsrjansem@gmail.com`, uid `OSCMBx74DMaJ9zlym9GAJOigtLX2`) com `role: "admin"`. Acesso a `/admin` confirmado. Novas contas ainda nascem `pendente` e precisam ser promovidas manualmente no Firestore até existir a tela de aprovação.
@@ -267,28 +268,11 @@ Ainda falta:
 
 Observação sobre deploy de regras: foram publicadas por **cópia manual no console** (não via Firebase CLI). Se editar `firestore.rules` no repositório, lembrar de republicar no console (ou configurar `firebase deploy`).
 
-### Ação obrigatória pendente: republicar regras do Firestore
+### Regras do Firestore publicadas
 
-O arquivo local `firestore.rules` já contém as regras atuais. Elas precisam ser republicadas manualmente no Console do Firebase:
+A publicação manual foi concluída em 9 de julho de 2026. Quando `firestore.rules` for alterado novamente, substituir todo o conteúdo na aba **Firestore Database → Regras** e clicar em **Publicar**.
 
-1. Abrir Firebase Console.
-2. Entrar no projeto `ieadtrr-sistema`.
-3. Ir em Firestore Database.
-4. Abrir a aba `Regras`.
-5. Apagar o conteúdo atual.
-6. Colar exatamente o conteúdo de `firestore.rules`.
-7. Clicar em `Publicar`.
-
-Sem essa republicação:
-
-- O cadastro de visitante/convidado pode falhar ao concluir o perfil em `users` (`pendente` → `visitante`).
-- O registro de presença em `/visitante` pode falhar ao gravar em `visitRecords`.
-- Admin/diretoria podem não conseguir ler o dashboard de presenças.
-- Admin pode não conseguir lançar presença nominal sem login.
-- Admin pode não conseguir promover visitante/convidado para congregado, congregado para membro ou atribuir cargo.
-- `membershipRequests` pode não ficar legível para diretoria.
-
-Teste após publicar:
+Teste funcional restante:
 
 1. Abrir `/cadastro`.
 2. Sem login, criar um acesso com nome, e-mail, senha e confirmação.
@@ -327,7 +311,8 @@ Concluído:
 
 Pendente imediato:
 
-- Republicar `firestore.rules` no Console do Firebase antes de testar cadastro de visitante/convidado, registro de presença, progressão para congregado/membro e atribuição de cargo no projeto real.
+- Testar gravações com contas de teste: cadastro de visitante/convidado, registro de presença e progressão para congregado/membro.
+- Migrar a solicitação aprovada antiga para a coleção `members`.
 
 ## Progresso desta sessão (2026-07-07)
 
@@ -349,7 +334,7 @@ Próximo:
 
 ## Próximas prioridades
 
-1. Republicar `firestore.rules` e testar o fluxo real de aprovação, criação em `members` e promoção do acesso.
+1. Migrar a aprovação antiga e testar o fluxo real de criação em `members` e promoção do acesso.
 2. Criar o Storage e persistir fotos e documentos (inclusive as fotos do banner).
 3. Trocar dados demonstrativos dos painéis `/membro` e `/diretoria` por dados reais.
 4. Página pública de agenda/eventos alimentada pelo Firestore (`events`).
