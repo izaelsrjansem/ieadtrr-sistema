@@ -22,11 +22,20 @@ export type ChurchRole =
 
 export type SystemRole = 'pendente' | 'visitante' | 'congregado' | 'membro' | 'diretoria' | 'admin'
 
+export type AdminSectionKey =
+  | 'cadastros'
+  | 'membros'
+  | 'presencas'
+  | 'congregacoes'
+  | 'usuarios'
+  | 'site'
+
 export type UserProfile = {
   uid: string
   email: string
   nomeCompleto: string
   role: SystemRole
+  adminSectionAccess?: AdminSectionKey[]
   createdAt: string
   tipoPessoa?: PublicPersonType
   congregacao?: string

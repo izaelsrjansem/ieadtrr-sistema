@@ -58,7 +58,7 @@ Rotas de área restrita, agora protegidas por autenticação real (ver seção A
 - `/visitante`: painel do visitante/convidado (`VisitorPanel`). Exige perfil visitante. Exibe o item genérico **Registro de presença**, permitindo escolher Visitante/Convidado, culto/atividade e igreja específica. Limite funcional: em dias comuns há um registro por dia; aos domingos há dois slots (`EBD` e `Culto à noite`). O registro do slot atual pode ser alterado pelo usuário.
 - `/congregado`: painel do congregado. Exige perfil congregado. Mostra o formulário de dados completos de congregado (`RegistrationForm fixedTipoPessoa="congregado"`), sem campo de batismo e sem cargo/função. O batismo e a promoção para membro são feitos pelo admin.
 - `/diretoria`: painel da diretoria. Exige perfil diretoria ou admin. Contém o **acompanhamento de visitantes e convidados** (`VisitorTracking`): métricas, contagem por congregação e tabela com nome, tipo, congregação, horário registrado e data — lido da coleção `visitRecords`. Abaixo, a escala de cultos (ainda demonstrativa).
-- `/admin`: painel administrativo. Exige perfil admin. Já com funções reais:
+- `/admin`: painel administrativo. Exige perfil admin **ou** usuário com pelo menos uma seção administrativa liberada em `adminSectionAccess`. O painel agora é compartimentado: mostra botões de seção e renderiza apenas a seção selecionada. Seções atuais: `Cadastros`, `Membros`, `Presenças`, `Congregações`, `Usuários` e `Site público`. Admin vê tudo; usuários não-admin veem somente as seções liberadas.
   - **Registrar presença sem login** (`AdminPresenceRegistration`): lançamento rápido de presença para visitante/convidado sem conta, gravando em `visitRecords` com `source: 'admin'`.
   - **Dashboard de análise de presenças** (`VisitorTracking`): lê `visitRecords` e mostra visitante/convidado, data, horário registrado, culto/atividade, igreja e classificação da igreja, com filtros por data, classificação e igreja; mostra mapa pequeno pela geolocalização da congregação.
   - **Aprovar solicitações de membro** (`MembershipApprovals`): lê `membershipRequests` em tempo real **filtrando só `tipoPessoa === 'membro'`** (visitante/convidado não passam por aprovação), com filtros de status e botões Aprovar/Rejeitar. Ao aprovar, uma operação em lote cria/atualiza o registro oficial em `members/{requestId}`, marca a solicitação como aprovada e promove para membro a conta vinculada por `userId` ou pelo mesmo e-mail. Contas de diretoria/admin preservam o perfil de acesso.
@@ -66,10 +66,10 @@ Rotas de área restrita, agora protegidas por autenticação real (ver seção A
   - **Cadastro nominal administrativo** (`AdminNominalRegistration`): ferramenta recolhível dentro do `/admin` para registrar visitante, convidado ou membro **sem criar login e senha** para a pessoa. Usa `RegistrationForm mode="admin"` e grava em `membershipRequests`.
   - **Cadastro de congregações** (`CongregationManager`): permite ao admin incluir, editar e suprimir igrejas/congregações, informando classificação (`Capital`, `Interior`, `Zona Rural de Boa Vista`), endereço, responsável, telefone e localização (opcional) via "Usar localização atual", "Indicar no mapa" (Leaflet) ou digitação de latitude/longitude. A lista de igrejas no admin tem filtro em botões `Todas`, `Capital`, `Interior` e `Zona Rural`. A supressão marca `ativa: false`.
   - **Progressão espiritual e cargos** (`ProfileProgressionManager`): lista visitantes/convidados, congregados e membros. Admin promove visitante/convidado para congregado, congregado para membro informando data de batismo, e atribui/remove cargo somente em perfil de membro.
-  - **Perfis de acesso** (`UserAccessManager`): lista a coleção `users` e permite ao admin mudar o `role` de cada pessoa (pendente/congregado/membro/diretoria/administrador). É aqui que se cria um novo administrador. O admin não pode alterar o próprio perfil (evita se trancar para fora).
+  - **Usuários e permissões por seção** (`UserAccessManager`): lista a coleção `users` e permite ao admin mudar o `role` de cada pessoa (pendente/congregado/membro/diretoria/administrador), além de liberar/remover acesso por seção administrativa (`adminSectionAccess`). É aqui que se cria um novo administrador e também se compartimenta o acesso ao painel. O admin não pode alterar o próprio perfil (evita se trancar para fora).
   - **Banner público / Cultos da semana** (`BannerManager`): troca as 4 fotos (prévia local, ainda sem Storage).
 
-Cabeçalho: sem login, o canto superior direito mostra **"Cadastre-se"** e **"Entre"**. Com login, o botão **"Painel Administrativo"** aparece **somente para admin** e leva a `/admin`; usuários comuns por enquanto veem apenas nome/e-mail e `Sair`.
+Cabeçalho: sem login, o canto superior direito mostra **"Cadastre-se"** e **"Entre"**. Com login, o botão **"Painel Administrativo"** aparece para admin ou para usuário com ao menos uma seção administrativa liberada; usuários comuns por enquanto veem apenas nome/e-mail e `Sair`.
 
 Estado de navegação: o item correspondente à página atual usa fundo verde em degradê, texto branco, sombra discreta e pequeno deslocamento para baixo. Isso se aplica ao menu público e ao botão `Painel Administrativo`. Na rota `/admin`, o cabeçalho da página mostra apenas o título grande `Administração`, sem a etiqueta `Área restrita`.
 
@@ -279,6 +279,8 @@ Observação sobre deploy de regras: foram publicadas por **cópia manual no con
 ### Regras do Firestore publicadas
 
 A publicação manual foi concluída em 9 de julho de 2026. Quando `firestore.rules` for alterado novamente, substituir todo o conteúdo na aba **Firestore Database → Regras** e clicar em **Publicar**.
+
+Atualização pendente de publicação: `firestore.rules` foi alterado para reconhecer `adminSectionAccess` e liberar operações por seção (`site`, `congregacoes`, `cadastros`, `presencas`, `membros`, `usuarios`). Antes de testar usuários não-admin com acesso compartimentado ao `/admin`, publicar novamente o conteúdo completo de `firestore.rules` no console do Firebase.
 
 Teste funcional restante:
 

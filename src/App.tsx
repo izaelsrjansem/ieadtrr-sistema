@@ -28,6 +28,7 @@ import {
   Phone,
   PlusCircle,
   ScrollText,
+  ShieldCheck,
   Sparkles,
   Star,
   Trash2,
@@ -75,6 +76,7 @@ import {
   promoteCongregadoToMembro,
   promoteVisitorToCongregado,
   subscribeUsers,
+  updateUserAdminSectionAccess,
   updateMemberChurchRole,
   updateUserRole,
   updateVisitorCongregacao,
@@ -90,6 +92,7 @@ import type {
   CongregationCategory,
   FirestoreDate,
   ChurchRole,
+  AdminSectionKey,
   MembershipRequest,
   MembershipRequestStatus,
   NavigationIconKey,
@@ -118,6 +121,52 @@ const systemRoleLabels: Record<SystemRole, string> = {
 }
 
 const assignableRoles: SystemRole[] = ['pendente', 'congregado', 'membro', 'diretoria', 'admin']
+
+type AdminSectionDefinition = {
+  key: AdminSectionKey
+  title: string
+  description: string
+  icon: typeof Home
+}
+
+const adminSections: AdminSectionDefinition[] = [
+  {
+    key: 'cadastros',
+    title: 'Cadastros',
+    description: 'Aprovações e cadastro nominal',
+    icon: CheckCircle2,
+  },
+  {
+    key: 'membros',
+    title: 'Membros',
+    description: 'Relação oficial, perfis e cargos',
+    icon: UsersRound,
+  },
+  {
+    key: 'presencas',
+    title: 'Presenças',
+    description: 'Registro e análise de visitantes',
+    icon: Clock,
+  },
+  {
+    key: 'congregacoes',
+    title: 'Congregações',
+    description: 'Igrejas, endereços e mapas',
+    icon: Building2,
+  },
+  {
+    key: 'usuarios',
+    title: 'Usuários',
+    description: 'Perfis e acesso por seção',
+    icon: ShieldCheck,
+  },
+  {
+    key: 'site',
+    title: 'Site público',
+    description: 'Menus, páginas e banner',
+    icon: LayoutDashboard,
+  },
+]
 
 const requestStatusFilters: Array<{ value: MembershipRequestStatus | 'todos'; label: string }> = [
   { value: 'pendente', label: 'Pendentes' },
@@ -223,6 +272,22 @@ function profilePanelPath(profile: UserProfile | null): string {
   }
 
   return '/cadastro'
+}
+
+function adminAccessSections(profile: UserProfile | null): AdminSectionKey[] {
+  if (!profile) {
+    return []
+  }
+
+  if (profile.role === 'admin') {
+    return adminSections.map((section) => section.key)
+  }
+
+  return profile.adminSectionAccess ?? []
+}
+
+function hasAdminPanelAccess(profile: UserProfile | null): boolean {
+  return adminAccessSections(profile).length > 0
 }
 
 function hasCoordinates(congregation?: Congregation | null): congregation is Congregation & {
@@ -596,9 +661,9 @@ function App() {
           <Route
             path="/admin"
             element={
-              <ProtectedRoute allowedRoles={['admin']}>
+              <AdminAccessRoute>
                 <AdminDashboard navigationItems={navigationItems} />
-              </ProtectedRoute>
+              </AdminAccessRoute>
             }
           />
           <Route path="/:customSlug" element={<CustomPublicPage navigationItems={navigationItems} />} />
@@ -608,6 +673,39 @@ function App() {
       <SiteFooter />
     </div>
   )
+}
+
+function AdminAccessRoute({ children }: { children: React.ReactNode }) {
+  const { firebaseUser, profile, loading } = useAuth()
+  const location = useLocation()
+
+  if (loading) {
+    return (
+      <section className="auth-page">
+        <div className="auth-panel status-panel">
+          <p>Carregando...</p>
+        </div>
+      </section>
+    )
+  }
+
+  if (!firebaseUser) {
+    return <Navigate replace state={{ from: location.pathname }} to="/login" />
+  }
+
+  if (!hasAdminPanelAccess(profile)) {
+    return (
+      <section className="auth-page">
+        <div className="auth-panel status-panel">
+          <LockKeyhole aria-hidden="true" />
+          <h1>Acesso administrativo não liberado</h1>
+          <p>Seu usuário ainda não tem uma seção administrativa liberada.</p>
+        </div>
+      </section>
+    )
+  }
+
+  return <>{children}</>
 }
 
 function SiteFooter() {
@@ -661,11 +759,11 @@ function HeaderAccess() {
     navigate('/')
   }
 
-  const isAdmin = profile?.role === 'admin'
+  const canOpenAdminPanel = hasAdminPanelAccess(profile)
 
   return (
     <div className="header-account">
-      {isAdmin ? (
+      {canOpenAdminPanel ? (
         <NavLink
           className={({ isActive }) => `panel-link admin-panel-link${isActive ? ' active' : ''}`}
           to="/admin"
@@ -1468,48 +1566,119 @@ function BoardDashboard() {
 }
 
 function AdminDashboard({ navigationItems }: { navigationItems: NavigationItem[] }) {
+  const { profile } = useAuth()
+  const availableSectionKeys = adminAccessSections(profile)
+  const availableSections = adminSections.filter((section) => availableSectionKeys.includes(section.key))
+  const [activeSection, setActiveSection] = useState<AdminSectionKey>(availableSections[0]?.key ?? 'cadastros')
+  const activeDefinition = availableSections.find((section) => section.key === activeSection) ?? availableSections[0]
+  const ActiveSectionIcon = activeDefinition?.icon
+
+  useEffect(() => {
+    if (!availableSectionKeys.includes(activeSection) && availableSectionKeys[0]) {
+      setActiveSection(availableSectionKeys[0])
+    }
+  }, [activeSection, availableSectionKeys])
+
+  function renderActiveSection() {
+    switch (activeDefinition?.key) {
+      case 'cadastros':
+        return (
+          <>
+            <AdminNominalRegistration />
+            <MembershipApprovals />
+            <div className="table-panel">
+              <h2>Campos do cadastro nominal</h2>
+              <table>
+                <tbody>
+                  <tr>
+                    <td>Identificação</td>
+                    <td>Nome, CPF, RG, foto e tipo de pessoa</td>
+                  </tr>
+                  <tr>
+                    <td>Endereço</td>
+                    <td>CEP, rua, número, bairro, cidade, estado e complemento</td>
+                  </tr>
+                  <tr>
+                    <td>Vida cristã</td>
+                    <td>Cargo/função, batismo, aceitação, carta de mudança e recomendação</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </>
+        )
+      case 'membros':
+        return (
+          <>
+            <MemberDirectory />
+            <ProfileProgressionManager />
+          </>
+        )
+      case 'presencas':
+        return (
+          <>
+            <AdminPresenceRegistration />
+            <VisitorTracking />
+          </>
+        )
+      case 'congregacoes':
+        return <CongregationManager />
+      case 'usuarios':
+        return <UserAccessManager />
+      case 'site':
+        return (
+          <>
+            <NavigationManager navigationItems={navigationItems} />
+            <BannerManager />
+          </>
+        )
+      default:
+        return null
+    }
+  }
+
   return (
     <section className="content-section dashboard-page">
       <DashboardHeader
         hideEyebrow
         title="Administração"
-        subtitle="Usuários, membros, cargos, congregações e configurações"
+        subtitle="Escolha uma seção para trabalhar com foco, sem mostrar todo o painel de uma vez."
       />
-      <div className="admin-grid">
-        <AdminItem title="Aprovar cadastros" value="Solicitações pendentes" />
-        <AdminItem title="Cadastro de membros" value="Registro nominal completo" />
-        <AdminItem title="Permissões" value="Membro, diretoria e admin" />
-        <AdminItem title="Configurações" value="Dados públicos do site" />
-      </div>
-      <NavigationManager navigationItems={navigationItems} />
-      <AdminPresenceRegistration />
-      <VisitorTracking />
-      <AdminNominalRegistration />
-      <MembershipApprovals />
-      <MemberDirectory />
-      <CongregationManager />
-      <ProfileProgressionManager />
-      <UserAccessManager />
-      <BannerManager />
-      <div className="table-panel">
-        <h2>Campos do cadastro nominal</h2>
-        <table>
-          <tbody>
-            <tr>
-              <td>Identificação</td>
-              <td>Nome, CPF, RG, foto e tipo de pessoa</td>
-            </tr>
-            <tr>
-              <td>Endereço</td>
-              <td>CEP, rua, número, bairro, cidade, estado e complemento</td>
-            </tr>
-            <tr>
-              <td>Vida cristã</td>
-              <td>Cargo/função, batismo, aceitação, carta de mudança e recomendação</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+
+      {availableSections.length === 0 ? (
+        <div className="auth-panel status-panel">
+          <LockKeyhole aria-hidden="true" />
+          <h2>Nenhuma seção liberada</h2>
+          <p>Peça ao administrador para liberar pelo menos uma seção do painel.</p>
+        </div>
+      ) : (
+        <>
+          <div className="admin-section-tabs" role="tablist" aria-label="Seções administrativas">
+            {availableSections.map((section) => (
+              <AdminSectionButton
+                active={activeDefinition?.key === section.key}
+                key={section.key}
+                section={section}
+                onClick={() => setActiveSection(section.key)}
+              />
+            ))}
+          </div>
+
+          {activeDefinition ? (
+            <div className="admin-active-section">
+              <div className="admin-active-heading">
+                {ActiveSectionIcon ? <ActiveSectionIcon aria-hidden="true" /> : null}
+                <div>
+                  <span>Seção selecionada</span>
+                  <h2>{activeDefinition.title}</h2>
+                  <p>{activeDefinition.description}</p>
+                </div>
+              </div>
+              {renderActiveSection()}
+            </div>
+          ) : null}
+        </>
+      )}
     </section>
   )
 }
@@ -2760,7 +2929,7 @@ function ProfileProgressionManager() {
 }
 
 function UserAccessManager() {
-  const { firebaseUser } = useAuth()
+  const { firebaseUser, profile } = useAuth()
   const [users, setUsers] = useState<UserProfile[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -2794,19 +2963,41 @@ function UserAccessManager() {
     }
   }
 
+  async function toggleSectionAccess(user: UserProfile, section: AdminSectionKey) {
+    setBusyUid(user.uid)
+    setError('')
+
+    const currentAccess = user.adminSectionAccess ?? []
+    const nextAccess = currentAccess.includes(section)
+      ? currentAccess.filter((item) => item !== section)
+      : [...currentAccess, section]
+
+    try {
+      await updateUserAdminSectionAccess(user.uid, nextAccess)
+    } catch {
+      setError('NÃ£o foi possÃ­vel atualizar as seÃ§Ãµes deste usuÃ¡rio.')
+    } finally {
+      setBusyUid(null)
+    }
+  }
+
   const sorted = users
     .filter((user) => user.role !== 'visitante')
     .sort((a, b) => a.nomeCompleto.localeCompare(b.nomeCompleto, 'pt-BR'))
+  const canManageUsers = profile?.role === 'admin'
 
   return (
     <section className="admin-panel-block">
       <div className="section-heading">
         <p className="eyebrow">Acessos</p>
-        <h2>Perfis de acesso</h2>
-        <p>Defina quem é membro, diretoria ou administrador. Para tornar alguém administrador, altere o perfil aqui.</p>
+        <h2>Usuários e permissões por seção</h2>
+        <p>Defina o perfil do usuário e quais seções administrativas ele pode acessar.</p>
       </div>
 
       {error ? <div className="form-alert error">{error}</div> : null}
+      {!canManageUsers ? (
+        <div className="form-alert error">Somente administrador pode alterar perfis e permissÃµes de usuÃ¡rios.</div>
+      ) : null}
 
       {loading ? (
         <p className="source-note">Carregando usuários...</p>
@@ -2828,7 +3019,7 @@ function UserAccessManager() {
                   <label>
                     Perfil
                     <select
-                      disabled={busyUid === user.uid || isSelf}
+                      disabled={busyUid === user.uid || isSelf || !canManageUsers}
                       onChange={(event) => changeRole(user.uid, event.target.value as SystemRole)}
                       value={user.role}
                     >
@@ -2840,6 +3031,26 @@ function UserAccessManager() {
                     </select>
                   </label>
                   {isSelf ? <small>Você não pode alterar o próprio perfil.</small> : null}
+                  <div className="admin-section-access">
+                    <strong>Seções liberadas</strong>
+                    {user.role === 'admin' ? (
+                      <span>Administrador acessa todas as seções automaticamente.</span>
+                    ) : (
+                      <div>
+                        {adminSections.map((section) => (
+                          <label className="checkbox-line" key={section.key}>
+                            <input
+                              checked={(user.adminSectionAccess ?? []).includes(section.key)}
+                              disabled={busyUid === user.uid || isSelf || !canManageUsers}
+                              onChange={() => toggleSectionAccess(user, section.key)}
+                              type="checkbox"
+                            />
+                            {section.title}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </article>
             )
@@ -3113,13 +3324,29 @@ function DashboardHeader({
   )
 }
 
-function AdminItem({ title, value }: { title: string; value: string }) {
+function AdminSectionButton({
+  section,
+  active,
+  onClick,
+}: {
+  section: AdminSectionDefinition
+  active: boolean
+  onClick: () => void
+}) {
+  const Icon = section.icon
+
   return (
-    <article className="admin-item">
-      <Home aria-hidden="true" />
-      <h2>{title}</h2>
-      <p>{value}</p>
-    </article>
+    <button
+      aria-selected={active}
+      className={`admin-section-tab${active ? ' active' : ''}`}
+      onClick={onClick}
+      role="tab"
+      type="button"
+    >
+      <Icon aria-hidden="true" />
+      <span>{section.title}</span>
+      <small>{section.description}</small>
+    </button>
   )
 }
 

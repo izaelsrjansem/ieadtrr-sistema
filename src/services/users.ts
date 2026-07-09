@@ -1,6 +1,6 @@
 import { collection, deleteField, doc, getDoc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore'
 import { db } from '../lib/firebase'
-import type { ChurchRole, MemberRegistration, SystemRole, UserProfile, VisitPersonType } from '../types'
+import type { AdminSectionKey, ChurchRole, MemberRegistration, SystemRole, UserProfile, VisitPersonType } from '../types'
 
 type VisitorProfileData = {
   email: string
@@ -65,6 +65,17 @@ export async function updateUserRole(uid: string, role: SystemRole): Promise<voi
   }
 
   await updateDoc(doc(db, 'users', uid), updates)
+}
+
+export async function updateUserAdminSectionAccess(uid: string, adminSectionAccess: AdminSectionKey[]): Promise<void> {
+  if (!db) {
+    throw new Error('Firebase nÃ£o configurado.')
+  }
+
+  await updateDoc(doc(db, 'users', uid), {
+    adminSectionAccess,
+    updatedAt: serverTimestamp(),
+  })
 }
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {

@@ -22,6 +22,13 @@ service cloud.firestore {
       return hasRole('diretoria') || isAdmin();
     }
 
+    function hasAdminSection(section) {
+      return isAdmin()
+        || (signedIn()
+          && userProfile().data.adminSectionAccess is list
+          && userProfile().data.adminSectionAccess.hasAny([section]));
+    }
+
     function protectedProfileFieldsUnchanged() {
       return !request.resource.data.diff(resource.data).affectedKeys()
         .hasAny(['possuiCargo', 'cargo', 'outroCargo', 'dataBatismo']);
@@ -40,12 +47,12 @@ service cloud.firestore {
 
     match /siteSettings/{document=**} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if hasAdminSection('site');
     }
 
     match /congregations/{document=**} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if hasAdminSection('congregacoes');
     }
 
     match /events/{document=**} {
@@ -60,28 +67,29 @@ service cloud.firestore {
 
     match /membershipRequests/{requestId} {
       allow create: if signedIn();
-      allow read: if isDiretoria();
-      allow update, delete: if isAdmin();
+      allow read: if isDiretoria() || hasAdminSection('cadastros');
+      allow update, delete: if hasAdminSection('cadastros');
     }
 
     match /visitRecords/{recordId} {
       allow create: if signedIn()
-        && (request.resource.data.userId == request.auth.uid || isDiretoria());
+        && (request.resource.data.userId == request.auth.uid || isDiretoria() || hasAdminSection('presencas'));
       allow read: if signedIn()
-        && (resource.data.userId == request.auth.uid || isDiretoria());
+        && (resource.data.userId == request.auth.uid || isDiretoria() || hasAdminSection('presencas'));
       allow update: if signedIn()
         && (
           (resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid)
           || isDiretoria()
+          || hasAdminSection('presencas')
         );
-      allow delete: if isAdmin();
+      allow delete: if hasAdminSection('presencas');
     }
 
     match /users/{userId} {
       allow create: if (signedIn() && request.auth.uid == userId
           && request.resource.data.role == 'pendente')
         || isAdmin();
-      allow read: if signedIn() && (request.auth.uid == userId || isDiretoria());
+      allow read: if signedIn() && (request.auth.uid == userId || isDiretoria() || hasAdminSection('usuarios'));
       allow update: if (signedIn() && request.auth.uid == userId
           && (selfProfileUpdate() || selfVisitorActivation()))
         || isAdmin();
@@ -89,7 +97,7 @@ service cloud.firestore {
     }
 
     match /members/{memberId} {
-      allow read, write: if isAdmin();
+      allow read, write: if hasAdminSection('membros');
     }
 
     match /serviceSchedules/{document=**} {

@@ -814,6 +814,152 @@ main {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.admin-section-tabs {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.admin-section-tab {
+  --card-accent: var(--green);
+  --card-tint: rgba(32, 95, 69, 0.08);
+  position: relative;
+  min-height: 8.2rem;
+  display: grid;
+  justify-items: start;
+  align-content: start;
+  gap: 0.45rem;
+  padding: 1rem 1rem 1rem 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  text-align: left;
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, var(--card-tint), rgba(255, 255, 255, 0.96) 48%),
+    var(--paper);
+  box-shadow: 0 12px 32px rgba(23, 33, 28, 0.07);
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.admin-section-tab::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
+  background: var(--card-accent);
+}
+
+.admin-section-tab:nth-child(2) {
+  --card-accent: var(--blue);
+  --card-tint: rgba(49, 92, 122, 0.1);
+}
+
+.admin-section-tab:nth-child(3) {
+  --card-accent: var(--gold);
+  --card-tint: rgba(201, 139, 47, 0.14);
+}
+
+.admin-section-tab:nth-child(4) {
+  --card-accent: var(--brick);
+  --card-tint: rgba(139, 61, 52, 0.1);
+}
+
+.admin-section-tab:nth-child(5) {
+  --card-accent: var(--success);
+  --card-tint: rgba(34, 108, 72, 0.1);
+}
+
+.admin-section-tab:hover,
+.admin-section-tab.active {
+  transform: translateY(3px);
+  box-shadow: 0 20px 44px rgba(23, 33, 28, 0.12);
+}
+
+.admin-section-tab.active {
+  color: #ffffff;
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--green) 0%, var(--green-dark) 100%);
+}
+
+.admin-section-tab.active::before {
+  background: var(--gold);
+}
+
+.admin-section-tab svg {
+  width: 2rem;
+  height: 2rem;
+  padding: 0.42rem;
+  border-radius: 8px;
+  color: var(--card-accent);
+  background: color-mix(in srgb, var(--card-accent) 14%, white);
+}
+
+.admin-section-tab.active svg {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.admin-section-tab span {
+  font-size: 1rem;
+  font-weight: 850;
+}
+
+.admin-section-tab small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.admin-section-tab.active small {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.admin-active-section {
+  display: grid;
+  gap: 1rem;
+}
+
+.admin-active-heading {
+  display: flex;
+  gap: 0.9rem;
+  align-items: center;
+  padding: 1rem;
+  border: 1px solid rgba(32, 95, 69, 0.16);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(32, 95, 69, 0.08), rgba(201, 139, 47, 0.08)),
+    var(--paper);
+}
+
+.admin-active-heading > svg {
+  width: 2.4rem;
+  height: 2.4rem;
+  padding: 0.5rem;
+  border-radius: 8px;
+  color: var(--green-dark);
+  background: color-mix(in srgb, var(--green) 13%, white);
+}
+
+.admin-active-heading span {
+  color: var(--gold);
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.admin-active-heading h2,
+.admin-active-heading p {
+  margin: 0;
+}
+
+.admin-active-heading p {
+  color: var(--muted);
+}
+
 .info-card,
 .person-card,
 .admin-item,
@@ -1811,6 +1957,45 @@ textarea:focus {
   font-size: 0.78rem;
 }
 
+.admin-section-access {
+  flex-basis: 100%;
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.admin-section-access > strong {
+  color: var(--green-dark);
+  font-size: 0.86rem;
+}
+
+.admin-section-access > span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.admin-section-access > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.admin-section-access .checkbox-line {
+  min-height: 2.2rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.admin-section-access input {
+  accent-color: var(--green);
+}
+
 .progression-list {
   display: grid;
   gap: 0.75rem;
@@ -2450,6 +2635,7 @@ th {
   .two-columns,
   .card-grid,
   .admin-grid,
+  .admin-section-tabs,
   .rules-grid,
   .institutional-band,
   .founders-list,
@@ -2533,5 +2719,13 @@ th {
 
   .navigation-manager-list article {
     grid-template-columns: 1fr;
+  }
+
+  .admin-section-tabs {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-active-heading {
+    align-items: flex-start;
   }
 }
