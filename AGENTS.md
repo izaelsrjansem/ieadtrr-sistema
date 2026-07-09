@@ -261,12 +261,10 @@ Estado atual:
 
 - `.env` (na raiz, ignorado pelo git) preenchido com as 6 chaves `VITE_FIREBASE_*` do app web. `isFirebaseConfigured` = true.
 - **Authentication**: ativo, provedor **E-mail/senha** habilitado.
-- **Firestore**: banco criado em produção, região `southamerica-east1` (São Paulo). A versão atual de `firestore.rules` foi **publicada manualmente em 9 de julho de 2026** pelo console (aba Regras).
-  - Validação após a publicação: o admin conseguiu ler sem erro de permissão as coleções `visitRecords`, `membershipRequests`, `members`, `congregations` e `users`.
-  - Existe uma solicitação aprovada antes da implementação do cadastro oficial. Por isso o painel mostra `1` aprovação antiga e `0` documentos em `members`; esse registro precisa ser migrado ou reaprovado por uma ferramenta de correção.
+- **Firestore**: banco criado em produção, região `southamerica-east1` (São Paulo). A versão atual de `firestore.rules` (com `hasAdminSection` e acesso por seção) foi **publicada/republicada pelo console** e validada: o admin lê sem erro `users`, `members`, `membershipRequests`, `congregations`, `visitRecords` e `siteSettings`.
 - **Storage**: **ainda não criado**. Em projetos novos o Storage pode exigir upgrade para o plano Blaze (pago); por isso foi adiado. Login, cadastro e aprovação de membros funcionam só com o Firestore.
 
-Primeira conta admin: **criada e promovida**. `users/{uid}` do presidente (`izaelsrjansem@gmail.com`, uid `OSCMBx74DMaJ9zlym9GAJOigtLX2`) com `role: "admin"`. Acesso a `/admin` confirmado. Novas contas ainda nascem `pendente` e precisam ser promovidas manualmente no Firestore até existir a tela de aprovação.
+Primeira conta admin: **criada e promovida**. `users/{uid}` do presidente (`izaelsrjansem@gmail.com`, uid `0SCMBx74DMaJ9zlym9GAJOigtLX2`) com `role: "admin"`. Acesso a `/admin` confirmado. A promoção de perfis e a liberação de seções administrativas hoje são feitas pelo `UserAccessManager` na seção Usuários do `/admin`.
 
 Ainda falta:
 
@@ -279,9 +277,9 @@ Observação sobre deploy de regras: foram publicadas por **cópia manual no con
 
 ### Regras do Firestore publicadas
 
-A publicação manual foi concluída em 9 de julho de 2026. Quando `firestore.rules` for alterado novamente, substituir todo o conteúdo na aba **Firestore Database → Regras** e clicar em **Publicar**.
+A versão vigente (com `adminSectionAccess` / `hasAdminSection` liberando operações por seção — `site`, `congregacoes`, `cadastros`, `presencas`, `membros`, `usuarios`) já está **publicada** no console e validada com acesso de admin. Quando `firestore.rules` for alterado novamente, substituir todo o conteúdo na aba **Firestore Database → Regras** e clicar em **Publicar**.
 
-Atualização pendente de publicação: `firestore.rules` foi alterado para reconhecer `adminSectionAccess` e liberar operações por seção (`site`, `congregacoes`, `cadastros`, `presencas`, `membros`, `usuarios`). Antes de testar usuários não-admin com acesso compartimentado ao `/admin`, publicar novamente o conteúdo completo de `firestore.rules` no console do Firebase.
+Falta ainda validar o acesso compartimentado com um usuário **não-admin** que tenha `adminSectionAccess` (ex.: só `cadastros`), confirmando que ele vê apenas a seção liberada.
 
 Teste funcional restante:
 
