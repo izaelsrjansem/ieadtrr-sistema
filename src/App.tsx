@@ -24,7 +24,7 @@ import {
   UsersRound,
   X,
 } from 'lucide-react'
-import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { RegistrationForm } from './components/RegistrationForm'
 import { useAuth } from './context/AuthContext'
@@ -56,6 +56,7 @@ import {
 } from './services/congregations'
 import { subscribeMembers } from './services/members'
 import { decideMembershipRequest, subscribeMembershipRequests } from './services/membership'
+import { defaultNavigationItems, saveNavigationItems, subscribeNavigationItems } from './services/siteNavigation'
 import {
   getUserProfile,
   promoteCongregadoToMembro,
@@ -78,6 +79,8 @@ import type {
   ChurchRole,
   MembershipRequest,
   MembershipRequestStatus,
+  NavigationIconKey,
+  NavigationItem,
   OfficialMember,
   SystemRole,
   UserProfile,
@@ -239,15 +242,131 @@ function CongregationMiniMap({ congregation }: { congregation?: Congregation | n
   )
 }
 
-const navItems = [
-  { to: '/', label: 'Início' },
-  { to: '/congregacoes', label: 'Congregações' },
-  { to: '/agenda', label: 'Agenda' },
-  { to: '/doutrina', label: 'Doutrina' },
-  { to: '/diretoria-publica', label: 'Diretoria' },
+const navigationIconComponents: Record<NavigationIconKey, typeof Home | null> = {
+  none: null,
+  home: Home,
+  church: Building2,
+  calendar: CalendarDays,
+  book: BookOpen,
+  users: UsersRound,
+  file: FileText,
+  megaphone: Megaphone,
+  map: MapPin,
+}
+
+const navigationIconOptions: Array<{ value: NavigationIconKey; label: string }> = [
+  { value: 'none', label: 'Sem ícone' },
+  { value: 'home', label: 'Início' },
+  { value: 'church', label: 'Igreja' },
+  { value: 'calendar', label: 'Calendário' },
+  { value: 'book', label: 'Livro' },
+  { value: 'users', label: 'Pessoas' },
+  { value: 'file', label: 'Página' },
+  { value: 'megaphone', label: 'Aviso' },
+  { value: 'map', label: 'Mapa' },
 ]
 
+const builtInNavigationIds = new Set(defaultNavigationItems.map((item) => item.id))
+const reservedNavigationPaths = new Set([
+  '/cadastro',
+  '/login',
+  '/visitante',
+  '/congregado',
+  '/membro',
+  '/membro/fundadores',
+  '/diretoria',
+  '/admin',
+  '/regras',
+])
+
+function sortedVisibleNavigationItems(items: NavigationItem[]): NavigationItem[] {
+  return [...items].filter((item) => item.visible).sort((a, b) => a.order - b.order)
+}
+
+function navigationSettingsFor(items: NavigationItem[], path: string): NavigationItem | undefined {
+  return items.find((item) => item.path === path) ?? defaultNavigationItems.find((item) => item.path === path)
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function menuStyleFor(item: NavigationItem): React.CSSProperties {
+  return {
+    fontSize: `${clampNumber(item.menuFontSize || 15, 12, 22)}px`,
+    fontWeight: item.menuBold ? 800 : 600,
+  }
+}
+
+function pageTitleStyleFor(item?: NavigationItem): React.CSSProperties {
+  return {
+    fontSize: `${clampNumber(item?.titleFontSize ?? 48, 28, 72)}px`,
+    fontWeight: item?.titleBold ? 800 : 500,
+  }
+}
+
+function normalizeNavigationPath(value: string): string {
+  if (!value.trim() || value.trim() === '/') {
+    return '/'
+  }
+
+  const slug = value
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/^\/+/, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+
+  return slug ? `/${slug}` : '/'
+}
+
+function renderPageContent(content?: string) {
+  const paragraphs = content
+    ?.split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  if (!paragraphs?.length) {
+    return null
+  }
+
+  return (
+    <div className="custom-page-content">
+      {paragraphs.map((paragraph) => (
+        <p key={paragraph}>{paragraph}</p>
+      ))}
+    </div>
+  )
+}
+
+function newNavigationItem(items: NavigationItem[]): NavigationItem {
+  const nextOrder = Math.max(-1, ...items.map((item) => item.order)) + 1
+
+  return {
+    id: `custom-${Date.now()}`,
+    label: 'Nova página',
+    path: `/nova-pagina-${nextOrder + 1}`,
+    icon: 'file',
+    order: nextOrder,
+    visible: true,
+    menuFontSize: 15,
+    menuBold: true,
+    pageTitle: 'Nova página',
+    pageContent: 'Escreva aqui o conteúdo que aparecerá para o público.',
+    titleFontSize: 48,
+    titleBold: false,
+  }
+}
+
 function App() {
+  const [navigationItems, setNavigationItems] = useState<NavigationItem[]>(defaultNavigationItems)
+  const navItems = sortedVisibleNavigationItems(navigationItems)
+
+  useEffect(() => subscribeNavigationItems(setNavigationItems), [])
+
   return (
     <div className="app-shell">
       <header className="site-header">
@@ -257,11 +376,22 @@ function App() {
         </Link>
 
         <nav aria-label="Navegação principal">
-          {navItems.map((item) => (
-            <NavLink key={item.to} to={item.to} className={({ isActive }) => (isActive ? 'active' : undefined)}>
-              {item.label}
-            </NavLink>
-          ))}
+          {navItems.map((item) => {
+            const Icon = navigationIconComponents[item.icon]
+
+            return (
+              <NavLink
+                end={item.path === '/'}
+                key={item.id}
+                to={item.path}
+                className={({ isActive }) => (isActive ? 'active' : undefined)}
+                style={menuStyleFor(item)}
+              >
+                {Icon ? <Icon className="nav-item-icon" aria-hidden="true" /> : null}
+                <span>{item.label}</span>
+              </NavLink>
+            )
+          })}
         </nav>
 
         <HeaderAccess />
@@ -269,12 +399,21 @@ function App() {
 
       <main>
         <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/congregacoes" element={<CongregationsPage />} />
-          <Route path="/agenda" element={<AgendaPage />} />
-          <Route path="/doutrina" element={<PublicDoctrinePage />} />
+          <Route path="/" element={<HomePage settings={navigationSettingsFor(navigationItems, '/')} />} />
+          <Route
+            path="/congregacoes"
+            element={<CongregationsPage settings={navigationSettingsFor(navigationItems, '/congregacoes')} />}
+          />
+          <Route path="/agenda" element={<AgendaPage settings={navigationSettingsFor(navigationItems, '/agenda')} />} />
+          <Route
+            path="/doutrina"
+            element={<PublicDoctrinePage settings={navigationSettingsFor(navigationItems, '/doutrina')} />}
+          />
           <Route path="/regras" element={<Navigate replace to="/doutrina" />} />
-          <Route path="/diretoria-publica" element={<PublicLeadershipPage />} />
+          <Route
+            path="/diretoria-publica"
+            element={<PublicLeadershipPage settings={navigationSettingsFor(navigationItems, '/diretoria-publica')} />}
+          />
           <Route path="/cadastro" element={<RegistrationPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route
@@ -321,10 +460,11 @@ function App() {
             path="/admin"
             element={
               <ProtectedRoute allowedRoles={['admin']}>
-                <AdminDashboard />
+                <AdminDashboard navigationItems={navigationItems} />
               </ProtectedRoute>
             }
           />
+          <Route path="/:customSlug" element={<CustomPublicPage navigationItems={navigationItems} />} />
         </Routes>
       </main>
 
@@ -389,10 +529,13 @@ function HeaderAccess() {
   return (
     <div className="header-account">
       {isAdmin ? (
-        <Link className="panel-link" to="/admin">
+        <NavLink
+          className={({ isActive }) => `panel-link admin-panel-link${isActive ? ' active' : ''}`}
+          to="/admin"
+        >
           <LayoutDashboard aria-hidden="true" />
-          Meu painel
-        </Link>
+          Painel Administrativo
+        </NavLink>
       ) : null}
       <span className="header-account-name">{profile?.nomeCompleto || firebaseUser.email}</span>
       <button className="login-link" onClick={handleSignOut} type="button">
@@ -403,17 +546,19 @@ function HeaderAccess() {
   )
 }
 
-function HomePage() {
+function HomePage({ settings }: { settings?: NavigationItem }) {
   return (
     <>
       <section className="hero-section">
         <div className="hero-pattern" aria-hidden="true" />
         <div className="hero-content">
           <p className="eyebrow">Bem-vindo à nossa casa</p>
-          <h1 className="hero-title">{churchDisplayName}</h1>
+          <h1 className="hero-title" style={pageTitleStyleFor(settings)}>
+            {settings?.pageTitle || churchDisplayName}
+          </h1>
           <p>
-            Um lugar de fé, comunhão e acolhimento. Aqui você encontra a agenda dos cultos, nossas congregações e as
-            portas sempre abertas para caminhar conosco.
+            {settings?.pageContent ||
+              'Um lugar de fé, comunhão e acolhimento. Aqui você encontra a agenda dos cultos, nossas congregações e as portas sempre abertas para caminhar conosco.'}
           </p>
           <p className="hero-invite">
             <Link to="/cadastro">Cadastre-se</Link> e participe desta grande família.
@@ -669,7 +814,7 @@ function CreateAccessPanel() {
   )
 }
 
-function CongregationsPage() {
+function CongregationsPage({ settings }: { settings?: NavigationItem }) {
   const [congregationList, setCongregationList] = useState<Congregation[]>(fallbackCongregations)
 
   useEffect(() => subscribeCongregations(setCongregationList), [])
@@ -679,8 +824,8 @@ function CongregationsPage() {
   return (
     <section className="content-section">
       <div className="section-heading">
-        <p className="eyebrow">Sede e congregações</p>
-        <h1>Campos de atendimento</h1>
+        <h1 style={pageTitleStyleFor(settings)}>{settings?.pageTitle || 'Congregações'}</h1>
+        {renderPageContent(settings?.pageContent)}
       </div>
       <div className="card-grid">
         {activeCongregations.map((congregation) => (
@@ -699,12 +844,13 @@ function CongregationsPage() {
   )
 }
 
-function AgendaPage() {
+function AgendaPage({ settings }: { settings?: NavigationItem }) {
   return (
     <section className="content-section">
       <div className="section-heading">
         <p className="eyebrow">Calendário público</p>
-        <h1>Agenda de cultos e atividades</h1>
+        <h1 style={pageTitleStyleFor(settings)}>{settings?.pageTitle || 'Agenda de cultos e atividades'}</h1>
+        {renderPageContent(settings?.pageContent)}
       </div>
       <div className="timeline-list">
         {publicEvents.map((event) => (
@@ -724,15 +870,16 @@ function AgendaPage() {
   )
 }
 
-function PublicDoctrinePage() {
+function PublicDoctrinePage({ settings }: { settings?: NavigationItem }) {
   return (
     <section className="content-section">
       <div className="section-heading">
         <p className="eyebrow">Institucional</p>
-        <h1>Doutrina</h1>
-        <p>
-          Princípios de fé e prática para visitantes, novos membros e pessoas interessadas em conhecer a igreja.
-        </p>
+        <h1 style={pageTitleStyleFor(settings)}>{settings?.pageTitle || 'Doutrina'}</h1>
+        {renderPageContent(
+          settings?.pageContent ||
+            'Princípios de fé e prática para visitantes, novos membros e pessoas interessadas em conhecer a igreja.',
+        )}
       </div>
 
       <div className="institutional-band">
@@ -769,12 +916,13 @@ function PublicDoctrinePage() {
   )
 }
 
-function PublicLeadershipPage() {
+function PublicLeadershipPage({ settings }: { settings?: NavigationItem }) {
   return (
     <section className="content-section">
       <div className="section-heading">
         <p className="eyebrow">Diretoria</p>
-        <h1>Relação pública da liderança</h1>
+        <h1 style={pageTitleStyleFor(settings)}>{settings?.pageTitle || 'Relação pública da liderança'}</h1>
+        {renderPageContent(settings?.pageContent)}
       </div>
       <div className="card-grid">
         {leadership.map((leader) => (
@@ -785,6 +933,32 @@ function PublicLeadershipPage() {
           </article>
         ))}
       </div>
+    </section>
+  )
+}
+
+function CustomPublicPage({ navigationItems }: { navigationItems: NavigationItem[] }) {
+  const { customSlug } = useParams()
+  const path = normalizeNavigationPath(customSlug ?? '')
+  const item = navigationItems.find((navigationItem) => navigationItem.visible && navigationItem.path === path)
+  const Icon = item ? navigationIconComponents[item.icon] : null
+
+  if (!item || defaultNavigationItems.some((defaultItem) => defaultItem.path === item.path)) {
+    return <Navigate replace to="/" />
+  }
+
+  return (
+    <section className="content-section custom-public-page">
+      <div className="section-heading">
+        <p className="eyebrow">IEADTRR</p>
+        <h1 style={pageTitleStyleFor(item)}>{item.pageTitle || item.label}</h1>
+        {renderPageContent(item.pageContent)}
+      </div>
+      <article className="info-card custom-page-card">
+        {Icon ? <Icon aria-hidden="true" /> : <FileText aria-hidden="true" />}
+        <h2>{item.label}</h2>
+        <p>Conteúdo publicado pela administração da igreja.</p>
+      </article>
     </section>
   )
 }
@@ -1156,16 +1330,21 @@ function BoardDashboard() {
   )
 }
 
-function AdminDashboard() {
+function AdminDashboard({ navigationItems }: { navigationItems: NavigationItem[] }) {
   return (
     <section className="content-section dashboard-page">
-      <DashboardHeader title="Administração" subtitle="Usuários, membros, cargos, congregações e configurações" />
+      <DashboardHeader
+        hideEyebrow
+        title="Administração"
+        subtitle="Usuários, membros, cargos, congregações e configurações"
+      />
       <div className="admin-grid">
         <AdminItem title="Aprovar cadastros" value="Solicitações pendentes" />
         <AdminItem title="Cadastro de membros" value="Registro nominal completo" />
         <AdminItem title="Permissões" value="Membro, diretoria e admin" />
         <AdminItem title="Configurações" value="Dados públicos do site" />
       </div>
+      <NavigationManager navigationItems={navigationItems} />
       <AdminPresenceRegistration />
       <VisitorTracking />
       <AdminNominalRegistration />
@@ -1193,6 +1372,310 @@ function AdminDashboard() {
             </tr>
           </tbody>
         </table>
+      </div>
+    </section>
+  )
+}
+
+function NavigationManager({ navigationItems }: { navigationItems: NavigationItem[] }) {
+  const { firebaseUser } = useAuth()
+  const [draftItems, setDraftItems] = useState<NavigationItem[]>(navigationItems)
+  const [editingItem, setEditingItem] = useState<NavigationItem | null>(null)
+  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    setDraftItems(navigationItems)
+    setEditingItem((current) => {
+      if (!current) {
+        return null
+      }
+
+      return navigationItems.find((item) => item.id === current.id) ?? null
+    })
+  }, [navigationItems])
+
+  const orderedItems = [...draftItems].sort((a, b) => a.order - b.order)
+  const editingIsBuiltIn = editingItem ? builtInNavigationIds.has(editingItem.id) : false
+
+  function beginAdd() {
+    setEditingItem(newNavigationItem(draftItems))
+    setStatus('idle')
+    setError('')
+  }
+
+  function beginEdit(item: NavigationItem) {
+    setEditingItem({ ...item })
+    setStatus('idle')
+    setError('')
+  }
+
+  function updateEditing<K extends keyof NavigationItem>(field: K, value: NavigationItem[K]) {
+    setEditingItem((current) => (current ? { ...current, [field]: value } : current))
+    setStatus('idle')
+  }
+
+  function validateItem(item: NavigationItem): NavigationItem | null {
+    const isBuiltIn = builtInNavigationIds.has(item.id)
+    const path = isBuiltIn ? item.path : normalizeNavigationPath(item.path)
+
+    if (!item.label.trim()) {
+      setError('Informe o nome que aparece no menu.')
+      return null
+    }
+
+    if (!item.pageTitle.trim()) {
+      setError('Informe o título da página.')
+      return null
+    }
+
+    if (!isBuiltIn && path === '/') {
+      setError('A página inicial já usa o caminho "/". Escolha outro caminho para o novo menu.')
+      return null
+    }
+
+    if (!isBuiltIn && reservedNavigationPaths.has(path)) {
+      setError('Este caminho já é usado por uma área restrita do sistema. Escolha outro endereço.')
+      return null
+    }
+
+    if (draftItems.some((draftItem) => draftItem.id !== item.id && draftItem.path === path)) {
+      setError('Já existe um menu usando este caminho.')
+      return null
+    }
+
+    return {
+      ...item,
+      label: item.label.trim(),
+      path,
+      order: Number.isFinite(Number(item.order)) ? Number(item.order) : draftItems.length,
+      menuFontSize: clampNumber(Number(item.menuFontSize) || 15, 12, 22),
+      pageTitle: item.pageTitle.trim(),
+      pageContent: item.pageContent.trim(),
+      titleFontSize: clampNumber(Number(item.titleFontSize) || 48, 28, 72),
+    }
+  }
+
+  async function handleSave(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    if (!firebaseUser || !editingItem) {
+      return
+    }
+
+    const validItem = validateItem(editingItem)
+    if (!validItem) {
+      setStatus('error')
+      return
+    }
+
+    setStatus('saving')
+    setError('')
+
+    const nextItems = draftItems.some((item) => item.id === validItem.id)
+      ? draftItems.map((item) => (item.id === validItem.id ? validItem : item))
+      : [...draftItems, validItem]
+
+    try {
+      await saveNavigationItems(nextItems, firebaseUser.uid)
+      setDraftItems(nextItems)
+      setEditingItem(validItem)
+      setStatus('saved')
+    } catch {
+      setStatus('error')
+      setError('Não foi possível salvar o menu. Confira sua conexão e as regras do Firestore.')
+    }
+  }
+
+  async function handleDelete(item: NavigationItem) {
+    if (!firebaseUser || builtInNavigationIds.has(item.id)) {
+      return
+    }
+
+    setStatus('saving')
+    setError('')
+
+    try {
+      const nextItems = draftItems.filter((draftItem) => draftItem.id !== item.id)
+      await saveNavigationItems(nextItems, firebaseUser.uid)
+      setDraftItems(nextItems)
+      setEditingItem(null)
+      setStatus('saved')
+    } catch {
+      setStatus('error')
+      setError('Não foi possível excluir este item.')
+    }
+  }
+
+  return (
+    <section className="admin-panel-block navigation-manager">
+      <div className="admin-block-heading">
+        <div className="section-heading">
+          <p className="eyebrow">Site público</p>
+          <h2>Menus e páginas públicas</h2>
+          <p>Edite nome, ícone, ordem, visibilidade, título, tamanho, negrito e conteúdo dos menus públicos.</p>
+        </div>
+        <button className="primary-action" type="button" onClick={beginAdd}>
+          <PlusCircle aria-hidden="true" />
+          Novo item
+        </button>
+      </div>
+
+      {error ? <div className="form-alert error">{error}</div> : null}
+      {status === 'saved' ? <div className="form-alert success">Menu público atualizado.</div> : null}
+
+      <div className="navigation-manager-layout">
+        <div className="navigation-manager-list" aria-label="Menus cadastrados">
+          {orderedItems.map((item) => {
+            const Icon = navigationIconComponents[item.icon]
+
+            return (
+              <article className={editingItem?.id === item.id ? 'active' : undefined} key={item.id}>
+                {Icon ? <Icon aria-hidden="true" /> : <FileText aria-hidden="true" />}
+                <div>
+                  <strong>{item.label}</strong>
+                  <span>{item.path}</span>
+                  <em>{item.visible ? 'Visível no menu' : 'Oculto do menu'}</em>
+                </div>
+                <button className="secondary-admin-action" type="button" onClick={() => beginEdit(item)}>
+                  <Pencil aria-hidden="true" />
+                  Editar
+                </button>
+              </article>
+            )
+          })}
+        </div>
+
+        {editingItem ? (
+          <form className="navigation-editor" onSubmit={handleSave}>
+            <div className="form-grid">
+              <label>
+                Nome no menu
+                <input value={editingItem.label} onChange={(event) => updateEditing('label', event.target.value)} />
+              </label>
+
+              <label>
+                Caminho da página
+                <input
+                  disabled={editingIsBuiltIn}
+                  value={editingItem.path}
+                  onChange={(event) => updateEditing('path', event.target.value)}
+                />
+                {editingIsBuiltIn ? <span className="field-hint">Menu principal do sistema; o endereço fica fixo.</span> : null}
+              </label>
+
+              <label>
+                Ícone
+                <select
+                  value={editingItem.icon}
+                  onChange={(event) => updateEditing('icon', event.target.value as NavigationIconKey)}
+                >
+                  {navigationIconOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Ordem
+                <input
+                  inputMode="numeric"
+                  type="number"
+                  value={editingItem.order}
+                  onChange={(event) => updateEditing('order', Number(event.target.value))}
+                />
+              </label>
+
+              <label>
+                Tamanho do menu
+                <input
+                  max={22}
+                  min={12}
+                  type="number"
+                  value={editingItem.menuFontSize}
+                  onChange={(event) => updateEditing('menuFontSize', Number(event.target.value))}
+                />
+              </label>
+
+              <label>
+                Tamanho do título
+                <input
+                  max={72}
+                  min={28}
+                  type="number"
+                  value={editingItem.titleFontSize}
+                  onChange={(event) => updateEditing('titleFontSize', Number(event.target.value))}
+                />
+              </label>
+
+              <label className="wide-field">
+                Título da página
+                <input value={editingItem.pageTitle} onChange={(event) => updateEditing('pageTitle', event.target.value)} />
+              </label>
+
+              <label className="wide-field">
+                Conteúdo da página
+                <textarea
+                  rows={5}
+                  value={editingItem.pageContent}
+                  onChange={(event) => updateEditing('pageContent', event.target.value)}
+                />
+              </label>
+            </div>
+
+            <div className="navigation-format-row">
+              <label className="checkbox-line">
+                <input
+                  checked={editingItem.visible}
+                  onChange={(event) => updateEditing('visible', event.target.checked)}
+                  type="checkbox"
+                />
+                Exibir no menu
+              </label>
+              <label className="checkbox-line">
+                <input
+                  checked={editingItem.menuBold}
+                  onChange={(event) => updateEditing('menuBold', event.target.checked)}
+                  type="checkbox"
+                />
+                Menu em negrito
+              </label>
+              <label className="checkbox-line">
+                <input
+                  checked={editingItem.titleBold}
+                  onChange={(event) => updateEditing('titleBold', event.target.checked)}
+                  type="checkbox"
+                />
+                Título em negrito
+              </label>
+            </div>
+
+            <div className="editor-actions">
+              <button className="primary-action" disabled={status === 'saving'} type="submit">
+                <CheckCircle2 aria-hidden="true" />
+                {status === 'saving' ? 'Salvando...' : 'Salvar menu'}
+              </button>
+              <button className="secondary-admin-action" type="button" onClick={() => setEditingItem(null)}>
+                <X aria-hidden="true" />
+                Cancelar
+              </button>
+              {!editingIsBuiltIn ? (
+                <button className="reject-btn" type="button" onClick={() => handleDelete(editingItem)}>
+                  <Trash2 aria-hidden="true" />
+                  Excluir item
+                </button>
+              ) : null}
+            </div>
+          </form>
+        ) : (
+          <div className="navigation-empty-state">
+            <FileText aria-hidden="true" />
+            <strong>Selecione um menu para editar</strong>
+            <p>Você também pode criar uma nova página pública usando o botão Novo item.</p>
+          </div>
+        )}
       </div>
     </section>
   )
@@ -2409,10 +2892,18 @@ function DashboardShell({
   )
 }
 
-function DashboardHeader({ title, subtitle }: { title: string; subtitle: string }) {
+function DashboardHeader({
+  title,
+  subtitle,
+  hideEyebrow = false,
+}: {
+  title: string
+  subtitle: string
+  hideEyebrow?: boolean
+}) {
   return (
     <div className="section-heading">
-      <p className="eyebrow">Área restrita</p>
+      {hideEyebrow ? null : <p className="eyebrow">Área restrita</p>}
       <h1>{title}</h1>
       <p>{subtitle}</p>
     </div>

@@ -162,3 +162,29 @@ export type ChurchEvent = {
   local: string
   categoria: 'culto' | 'missao' | 'campanha' | 'reuniao'
 }
+
+export type NavigationIconKey =
+  | 'none'
+  | 'home'
+  | 'church'
+  | 'calendar'
+  | 'book'
+  | 'users'
+  | 'file'
+  | 'megaphone'
+  | 'map'
+
+export type NavigationItem = {
+  id: string
+  label: string
+  path: string
+  icon: NavigationIconKey
+  order: number
+  visible: boolean
+  menuFontSize: number
+  menuBold: boolean
+  pageTitle: string
+  pageContent: string
+  titleFontSize: number
+  titleBold: boolean
+}

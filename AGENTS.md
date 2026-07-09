@@ -69,7 +69,11 @@ Rotas de área restrita, agora protegidas por autenticação real (ver seção A
   - **Perfis de acesso** (`UserAccessManager`): lista a coleção `users` e permite ao admin mudar o `role` de cada pessoa (pendente/congregado/membro/diretoria/administrador). É aqui que se cria um novo administrador. O admin não pode alterar o próprio perfil (evita se trancar para fora).
   - **Banner público / Cultos da semana** (`BannerManager`): troca as 4 fotos (prévia local, ainda sem Storage).
 
-Cabeçalho: sem login, o canto superior direito mostra **"Cadastre-se"** e **"Entre"**. Com login, o botão **"Meu painel"** aparece **somente para admin** e leva a `/admin`; usuários comuns por enquanto veem apenas nome/e-mail e `Sair`.
+Cabeçalho: sem login, o canto superior direito mostra **"Cadastre-se"** e **"Entre"**. Com login, o botão **"Painel Administrativo"** aparece **somente para admin** e leva a `/admin`; usuários comuns por enquanto veem apenas nome/e-mail e `Sair`.
+
+Estado de navegação: o item correspondente à página atual usa fundo verde em degradê, texto branco, sombra discreta e pequeno deslocamento para baixo. Isso se aplica ao menu público e ao botão `Painel Administrativo`. Na rota `/admin`, o cabeçalho da página mostra apenas o título grande `Administração`, sem a etiqueta `Área restrita`.
+
+Menus públicos e conteúdo das páginas principais agora são parametrizáveis pelo administrador em `/admin`, na seção **Menus e páginas públicas** (`NavigationManager`). Os dados ficam em `siteSettings/navigation` no Firestore, com leitura pública e escrita restrita ao admin pelas regras já existentes de `siteSettings`. O admin pode editar os menus atuais (`Início`, `Congregações`, `Agenda`, `Doutrina`, `Diretoria`) e criar novos itens. Campos configuráveis: nome do menu, caminho da página, ícone, ordem, visibilidade, tamanho do texto do menu, negrito do menu, título da página, conteúdo da página, tamanho do título e negrito do título. Itens novos viram páginas públicas simples renderizadas pela rota dinâmica `/:customSlug`; os itens principais continuam usando suas páginas especiais, mas obedecem ao título/conteúdo/formatação configurados.
 
 Os painéis `/membro` e `/diretoria` ainda têm conteúdo demonstrativo; o `/admin` já opera sobre dados reais nas funções acima.
 
@@ -296,7 +300,7 @@ Concluído:
 - Congregações passaram a vir do Firestore (`src/services/congregations.ts`), com fallback local em `src/data/church.ts`, categorias capital/interior, geolocalização para mapa e filtro administrativo `Todas`/`Capital`/`Interior`.
 - Fluxo de login/cadastro alterado: cabeçalho sem login mostra **Cadastre-se** e **Entre**; `/login` agora é somente entrada com e-mail/senha e recuperação de senha por `sendPasswordReset`.
 - `/cadastro` agora cria o acesso primeiro quando não há login; depois de logado, o usuário informa se é visitante, convidado ou membro.
-- Ajuste posterior: após login, o usuário é direcionado pelo perfil; admin vai para `/admin` e não vê o formulário público de `/cadastro`. O botão **Meu painel** no cabeçalho ficou exclusivo para admin.
+- Ajuste posterior: após login, o usuário é direcionado pelo perfil; admin vai para `/admin` e não vê o formulário público de `/cadastro`. O botão **Painel Administrativo** no cabeçalho ficou exclusivo para admin.
 - Cadastro nominal administrativo adicionado dentro de `/admin` para registrar visitante, convidado ou membro sem criar login/senha. Visitantes/convidados registrados ali aparecem no acompanhamento da diretoria.
 - Visitante/convidado não criam mais senha dentro do formulário. O formulário atualiza o próprio perfil em `users/{uid}` via `completeVisitorProfile`, fazendo `role: 'visitante'`.
 - Cadastro de membro continua em `membershipRequests`, mas agora exige usuário autenticado e marca `tipoPessoa: 'membro'` no perfil via `markMemberRegistrationProfile`, mantendo o `role` pendente.
@@ -325,7 +329,7 @@ Concluído:
 
 Também nesta sessão:
 
-- Botão "Meu painel" no cabeçalho (atualmente exibido somente para admin).
+- Botão "Painel Administrativo" no cabeçalho (atualmente exibido somente para admin).
 - Tela de **aprovação de cadastros** (`membershipRequests`) e **gerenciador de perfis de acesso** (`users`) no `/admin`. Novos serviços: `src/services/users.ts` (`subscribeUsers`, `updateUserRole`) e novas funções em `src/services/membership.ts` (`subscribeMembershipRequests`, `decideMembershipRequest`).
 
 Próximo:
