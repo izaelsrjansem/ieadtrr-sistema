@@ -1203,6 +1203,21 @@ textarea:focus {
   border-color: var(--green);
 }
 
+input.field-control-error,
+select.field-control-error,
+textarea.field-control-error {
+  border-color: #c2410c;
+  background: #fff4ed;
+  box-shadow: 0 0 0 3px rgba(194, 65, 12, 0.16);
+}
+
+input.field-control-error:focus,
+select.field-control-error:focus,
+textarea.field-control-error:focus {
+  outline: 3px solid rgba(194, 65, 12, 0.24);
+  border-color: #c2410c;
+}
+
 .wide-field {
   grid-column: span 2;
 }
@@ -1220,6 +1235,12 @@ textarea:focus {
   min-height: 1rem;
 }
 
+.whatsapp-option svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  color: var(--success);
+}
+
 .selection-note {
   margin: 0.8rem 0 0;
   padding: 0.75rem;
@@ -1232,6 +1253,38 @@ textarea:focus {
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.4;
+}
+
+.field-inline-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.68rem 0.75rem;
+  border: 1px solid #c2410c;
+  border-radius: 8px;
+  color: #8a4b12;
+  background: #fff7e6;
+  box-shadow: 0 0 0 3px rgba(194, 65, 12, 0.1);
+}
+
+.field-inline-alert svg {
+  flex: 0 0 auto;
+  width: 1.05rem;
+  height: 1.05rem;
+  margin-top: 0.1rem;
+}
+
+.field-inline-alert span {
+  display: grid;
+  gap: 0.18rem;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.field-inline-alert small {
+  color: color-mix(in srgb, #8a4b12 76%, var(--muted));
+  font-size: 0.78rem;
+  font-weight: 650;
 }
 
 .required-hint {
@@ -1405,8 +1458,16 @@ textarea:focus {
   margin-top: 0.9rem;
 }
 
+.baptism-date-field {
+  padding: 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--green) 28%, var(--line));
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(32, 95, 69, 0.08), rgba(255, 255, 255, 0.92));
+}
+
 .privacy-line {
   padding: 0.9rem;
+  border: 1px solid transparent;
   border-radius: 8px;
   background: var(--surface);
 }
@@ -1415,9 +1476,21 @@ textarea:focus {
   color: var(--blue);
 }
 
+.privacy-line.required-field-missing-line {
+  border-color: #c2410c;
+  background: #fff4ed;
+  box-shadow: 0 0 0 3px rgba(194, 65, 12, 0.14);
+}
+
+.privacy-line.required-field-missing-line svg,
+.privacy-line.required-field-missing-line .required-hint {
+  color: #c2410c;
+}
+
 .field-error {
   color: var(--danger);
   font-size: 0.86rem;
+  font-weight: 750;
 }
 
 .form-alert {
@@ -1437,6 +1510,92 @@ textarea:focus {
 .form-alert.error {
   color: var(--danger);
   background: rgba(157, 47, 47, 0.1);
+}
+
+.form-alert.warning {
+  align-items: flex-start;
+  color: #8a4b12;
+  background: #fff7e6;
+}
+
+.duplicate-cpf-alert span {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.duplicate-cpf-alert small {
+  color: color-mix(in srgb, #8a4b12 76%, var(--muted));
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.floating-notice-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(12, 24, 19, 0.48);
+  backdrop-filter: blur(4px);
+}
+
+.floating-notice {
+  position: relative;
+  width: min(520px, 100%);
+  display: grid;
+  justify-items: start;
+  gap: 0.8rem;
+  padding: 1.25rem;
+  border: 1px solid color-mix(in srgb, var(--gold) 36%, var(--line));
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(201, 139, 47, 0.12), rgba(255, 255, 255, 0.96) 42%),
+    var(--paper);
+  box-shadow: 0 24px 80px rgba(12, 24, 19, 0.28);
+}
+
+.floating-notice > svg {
+  width: 2.3rem;
+  height: 2.3rem;
+  padding: 0.5rem;
+  border-radius: 8px;
+  color: #8a5a00;
+  background: rgba(201, 139, 47, 0.16);
+}
+
+.floating-notice h3,
+.floating-notice p {
+  margin: 0;
+}
+
+.floating-notice h3 {
+  color: var(--ink);
+  font-size: 1.35rem;
+}
+
+.floating-notice p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.floating-notice-close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  display: inline-grid;
+  place-items: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--paper);
+}
+
+.floating-notice-close:hover {
+  color: var(--green-dark);
+  background: var(--surface-strong);
 }
 
 .auth-page {
@@ -1570,6 +1729,13 @@ textarea:focus {
   align-items: start;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.admin-heading-action {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 10.5rem;
+  white-space: nowrap;
 }
 
 .navigation-manager {
@@ -2715,6 +2881,10 @@ th {
   .login-link,
   .panel-link {
     width: 100%;
+  }
+
+  .admin-heading-action {
+    min-width: 0;
   }
 
   .navigation-manager-list article {

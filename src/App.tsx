@@ -132,8 +132,8 @@ type AdminSectionDefinition = {
 const adminSections: AdminSectionDefinition[] = [
   {
     key: 'cadastros',
-    title: 'Cadastros',
-    description: 'Aprovações e cadastro nominal',
+    title: 'Cadastro',
+    description: 'Membros e congregados',
     icon: CheckCircle2,
   },
   {
@@ -1587,7 +1587,7 @@ function AdminDashboard({ navigationItems }: { navigationItems: NavigationItem[]
             <AdminNominalRegistration />
             <MembershipApprovals />
             <div className="table-panel">
-              <h2>Campos do cadastro nominal</h2>
+              <h2>Campos do cadastro de membros e congregados</h2>
               <table>
                 <tbody>
                   <tr>
@@ -2129,17 +2129,17 @@ function AdminNominalRegistration() {
     <section className="admin-panel-block">
       <div className="section-heading admin-block-heading">
         <div>
-          <p className="eyebrow">Cadastro nominal</p>
-          <h2>Registrar pessoa sem login e senha</h2>
-          <p>Use para registrar presença ou dados iniciais de visitante, convidado ou membro pela administração.</p>
+          <p className="eyebrow">Cadastro</p>
+          <h2>Cadastrar membro ou congregado</h2>
+          <p>Use esta seção para registrar dados completos e classificar a pessoa como membro ou congregado.</p>
         </div>
-        <button className="primary-action" type="button" onClick={() => setOpen((current) => !current)}>
+        <button className="primary-action admin-heading-action" type="button" onClick={() => setOpen((current) => !current)}>
           <UserPlus aria-hidden="true" />
-          {open ? 'Fechar cadastro' : 'Abrir cadastro'}
+          {open ? 'Fechar cadastro' : 'Novo Cadastro'}
         </button>
       </div>
 
-      {open ? <RegistrationForm mode="admin" /> : null}
+      {open ? <RegistrationForm mode="admin" allowedPersonTypes={['membro', 'congregado']} /> : null}
     </section>
   )
 }

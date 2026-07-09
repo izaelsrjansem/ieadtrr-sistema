@@ -44,6 +44,7 @@ export type UserProfile = {
   dataNascimento?: string
   possuiWhatsapp?: boolean
   cpf?: string
+  cpfDigits?: string
   rg?: string
   endereco?: Address
   dataAceitacao?: string
@@ -82,6 +83,7 @@ export type MemberRegistration = {
   possuiWhatsapp: boolean
   convidadoPor?: string
   cpf: string
+  cpfDigits?: string
   rg: string
   dataNascimento: string
   tipoPessoa: PublicPersonType

@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, FileUp, Send, ShieldCheck, UserRound } from 'lucide-react'
+import { CheckCircle2, FileUp, MessageCircle, Send, ShieldCheck, UserRound, X } from 'lucide-react'
 import { z } from 'zod'
 import { useAuth } from '../context/AuthContext'
 import { churchRoleOptions, congregations as fallbackCongregations, logradouroOptions, personTypeOptions } from '../data/church'
-import { submitMembershipRequest } from '../services/membership'
+import {
+  findExistingRegistrationByCpf,
+  submitMembershipRequest,
+  type ExistingCpfRegistration,
+} from '../services/membership'
 import { subscribeCongregations } from '../services/congregations'
 import { completeCongregadoProfile, completeVisitorProfile, markMemberRegistrationProfile } from '../services/users'
 import type { ChurchRole, Congregation, MemberRegistration, PublicPersonType } from '../types'
@@ -96,6 +100,34 @@ function ageBetween(birthDate: string, referenceDate: string): number | null {
   return age
 }
 
+function todayDateKey(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function memberBaptismBlockMessage(data: MemberRegistration): string {
+  if (data.tipoPessoa !== 'membro' || !data.dataNascimento) {
+    return ''
+  }
+
+  const referenceDate = data.dataBatismo || todayDateKey()
+  const birth = new Date(data.dataNascimento)
+  const reference = new Date(referenceDate)
+
+  if (Number.isNaN(birth.getTime()) || Number.isNaN(reference.getTime()) || birth > reference) {
+    return ''
+  }
+
+  const age = ageBetween(data.dataNascimento, referenceDate)
+
+  if (age === null || age >= 12) {
+    return ''
+  }
+
+  return data.dataBatismo
+    ? 'Esta pessoa não pode ser cadastrada como membro, porque na data informada para o batismo ela ainda não tinha 12 anos. Pela doutrina da igreja, o batismo nas águas ocorre a partir dos 12 anos.'
+    : 'Esta pessoa não pode ser cadastrada como membro neste momento, porque ainda não tem idade doutrinária para o batismo nas águas ou ainda não foi batizada. Cadastre como congregado até preencher esse requisito.'
+}
+
 const emailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 
 const registrationSchema = z
@@ -175,10 +207,6 @@ const registrationSchema = z
         ctx.addIssue({ code: 'custom', path: ['cpf'], message: 'Informe um CPF válido.' })
       }
 
-      if (data.rg.trim().length < 4) {
-        ctx.addIssue({ code: 'custom', path: ['rg'], message: 'Informe o RG.' })
-      }
-
       if (!data.endereco.tipoLogradouro) {
         ctx.addIssue({ code: 'custom', path: ['endereco', 'tipoLogradouro'], message: 'Selecione o tipo de logradouro.' })
       }
@@ -237,6 +265,7 @@ type ErrorMap = Record<string, string>
 type RegistrationFormProps = {
   mode?: 'self' | 'admin'
   fixedTipoPessoa?: PublicPersonType
+  allowedPersonTypes?: PublicPersonType[]
 }
 
 const initialForm: MemberRegistration = {
@@ -297,7 +326,15 @@ function RequiredHint() {
   return <span className="required-hint">Campo obrigatório</span>
 }
 
-export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: RegistrationFormProps) {
+function personTypeLabel(value: PublicPersonType): string {
+  if (value === 'congregado') {
+    return 'Congregado'
+  }
+
+  return personTypeOptions.find((option) => option.value === value)?.label ?? value
+}
+
+export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPersonTypes }: RegistrationFormProps) {
   const { firebaseUser, profile } = useAuth()
   const isAdminMode = mode === 'admin'
   const accountEmail = isAdminMode ? '' : (firebaseUser?.email ?? profile?.email ?? '')
@@ -307,6 +344,8 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
   const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle')
   const [lastProtocol, setLastProtocol] = useState<string>('')
   const [cepStatus, setCepStatus] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [floatingNotice, setFloatingNotice] = useState('')
+  const [existingCpfRegistration, setExistingCpfRegistration] = useState<ExistingCpfRegistration | null>(null)
   const [congregationList, setCongregationList] = useState<Congregation[]>(fallbackCongregations)
 
   const isMembro = form.tipoPessoa === 'membro'
@@ -315,6 +354,15 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
   const canAdminAssignCargo = isAdminMode && isMembro
   const isConvidado = form.tipoPessoa === 'convidado'
   const activeCongregations = congregationList.filter((congregation) => congregation.ativa !== false)
+  const isMemberCongregadoOnly =
+    allowedPersonTypes?.length ? allowedPersonTypes.every((type) => type === 'membro' || type === 'congregado') : false
+  const availablePersonTypes = useMemo(
+    () =>
+      allowedPersonTypes
+        ? allowedPersonTypes.map((value) => ({ value, label: personTypeLabel(value) }))
+        : personTypeOptions,
+    [allowedPersonTypes],
+  )
 
   const selectedRoleLabel = useMemo(() => {
     if (!form.cargo) {
@@ -386,28 +434,64 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
   }, [fixedTipoPessoa])
 
   useEffect(() => {
-    if (isAdminMode) {
+    if (fixedTipoPessoa || !allowedPersonTypes?.length || allowedPersonTypes.includes(form.tipoPessoa)) {
       return
     }
 
-    setForm((current) => {
-      if (!current.possuiCargo && !current.cargo && !current.outroCargo) {
-        return current
-      }
+    const nextTipoPessoa = allowedPersonTypes[0]
+    setForm((current) => ({
+      ...current,
+      tipoPessoa: nextTipoPessoa,
+      possuiCargo: nextTipoPessoa === 'membro' ? current.possuiCargo : false,
+      cargo: nextTipoPessoa === 'membro' ? current.cargo : undefined,
+      outroCargo: nextTipoPessoa === 'membro' ? current.outroCargo : '',
+      dataBatismo: nextTipoPessoa === 'membro' ? current.dataBatismo : '',
+    }))
+  }, [allowedPersonTypes, fixedTipoPessoa, form.tipoPessoa])
 
-      return {
-        ...current,
-        possuiCargo: false,
-        cargo: undefined,
-        outroCargo: '',
-      }
-    })
-  }, [isAdminMode, form.tipoPessoa])
+  useEffect(() => {
+    if (isMembro && isAdminMode) {
+      return
+    }
+
+    setForm((current) =>
+      current.possuiCargo || current.cargo || current.outroCargo || (!isMembro && current.dataBatismo)
+        ? {
+            ...current,
+            possuiCargo: false,
+            cargo: undefined,
+            outroCargo: '',
+            dataBatismo: isMembro ? current.dataBatismo : '',
+          }
+        : current,
+    )
+  }, [isAdminMode, isMembro, form.tipoPessoa])
 
   useEffect(() => subscribeCongregations(setCongregationList), [])
 
+  function clearFieldError(name: string) {
+    setErrors((current) => {
+      if (!current[name]) {
+        return current
+      }
+
+      const { [name]: _removed, ...nextErrors } = current
+      return nextErrors
+    })
+  }
+
   function updateField<K extends keyof MemberRegistration>(field: K, value: MemberRegistration[K]) {
     setForm((current) => ({ ...current, [field]: value }))
+    if (field === 'cpf') {
+      setExistingCpfRegistration(null)
+    }
+
+    if (field === 'tipoPessoa') {
+      setErrors({})
+      return
+    }
+
+    clearFieldError(String(field))
   }
 
   function updateAddress(field: keyof MemberRegistration['endereco'], value: string) {
@@ -418,6 +502,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
         [field]: value,
       },
     }))
+    clearFieldError(`endereco.${field}`)
   }
 
   async function handleCepLookup(rawCep: string) {
@@ -454,6 +539,16 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
           estado: data.uf || current.endereco.estado,
         },
       }))
+      setErrors((current) => {
+        const {
+          ['endereco.rua']: _rua,
+          ['endereco.bairro']: _bairro,
+          ['endereco.cidade']: _cidade,
+          ['endereco.estado']: _estado,
+          ...nextErrors
+        } = current
+        return nextErrors
+      })
       setCepStatus('idle')
     } catch {
       setCepStatus('error')
@@ -464,10 +559,81 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
     return errors[name] ? <span className="field-error">{errors[name]}</span> : null
   }
 
+  function fieldErrorClass(name: string) {
+    return errors[name] ? 'field-control-error' : undefined
+  }
+
+  function lineErrorClass(name: string, baseClass: string) {
+    return errors[name] ? `${baseClass} required-field-missing-line` : baseClass
+  }
+
+  function existingCpfSourceLabel(registration: ExistingCpfRegistration) {
+    if (registration.source === 'members') {
+      return 'cadastro oficial'
+    }
+
+    if (registration.source === 'users') {
+      return 'perfil de usuário'
+    }
+
+    return 'solicitação de cadastro'
+  }
+
+  function duplicateCpfAlert(compact = false) {
+    if (!existingCpfRegistration) {
+      return null
+    }
+
+    const AlertTag = compact ? 'span' : 'div'
+
+    return (
+      <AlertTag className={compact ? 'field-inline-alert duplicate-cpf-inline' : 'form-alert warning duplicate-cpf-alert'}>
+        <ShieldCheck aria-hidden="true" />
+        <span>
+          CPF já cadastrado em {existingCpfSourceLabel(existingCpfRegistration)}:{' '}
+          <strong>{existingCpfRegistration.nomeCompleto}</strong>
+          {existingCpfRegistration.status ? ` (${existingCpfRegistration.status})` : ''}. Edite o cadastro existente em vez de criar um novo.
+          <small>Protocolo/ID: {existingCpfRegistration.id}</small>
+        </span>
+      </AlertTag>
+    )
+  }
+
+  function baptismDateField() {
+    if (!isMembro) {
+      return null
+    }
+
+    const baptismNotice = memberBaptismBlockMessage(form)
+
+    return (
+      <label className="baptism-date-field">
+        <span>Data de batismo <span className="optional-tag">(opcional)</span></span>
+        <input
+          className={fieldErrorClass('dataBatismo')}
+          type="date"
+          value={form.dataBatismo}
+          onChange={(event) => updateField('dataBatismo', event.target.value)}
+        />
+        <small className="field-hint">
+          Para congregado este campo não aparece. Ele será usado quando a pessoa for cadastrada ou promovida como membro.
+        </small>
+        {baptismNotice ? (
+          <span className="field-inline-alert baptism-rule-alert">
+            <ShieldCheck aria-hidden="true" />
+            <span>{baptismNotice}</span>
+          </span>
+        ) : null}
+        {fieldError('dataBatismo')}
+      </label>
+    )
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setStatus('sending')
     setErrors({})
+    setFloatingNotice('')
 
     const formForValidation = isAdminMode
       ? form
@@ -477,6 +643,13 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
           cargo: undefined,
           outroCargo: '',
         }
+
+    const baptismBlockMessage = memberBaptismBlockMessage(formForValidation as MemberRegistration)
+    if (baptismBlockMessage) {
+      setFloatingNotice(baptismBlockMessage)
+      setStatus('idle')
+      return
+    }
 
     const parsed = registrationSchema.safeParse(formForValidation)
 
@@ -496,6 +669,16 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
       const data = {
         ...parsed.data,
         email: isAdminMode ? parsed.data.email.trim() : accountEmail || parsed.data.email.trim(),
+      }
+
+      if (isAdminMode && (data.tipoPessoa === 'membro' || data.tipoPessoa === 'congregado')) {
+        const existingRegistration = await findExistingRegistrationByCpf(data.cpf)
+        if (existingRegistration) {
+          setExistingCpfRegistration(existingRegistration)
+          setErrors({ cpf: 'Este CPF já possui cadastro no sistema.' })
+          setStatus('idle')
+          return
+        }
       }
 
       if (!isAdminMode) {
@@ -559,7 +742,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
       <div className="form-band">
         <div>
           <p className="eyebrow">Cadastro nominal</p>
-          <h2>Dados do membro, visitante ou convidado</h2>
+          <h2>{isMemberCongregadoOnly ? 'Dados de membros e congregados' : 'Dados do membro, visitante ou convidado'}</h2>
         </div>
         <UserRound aria-hidden="true" />
       </div>
@@ -570,10 +753,10 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
           {fixedTipoPessoa ? (
             <label className="active">
               <input type="radio" name="tipoPessoa" value={fixedTipoPessoa} checked readOnly />
-              {fixedTipoPessoa === 'congregado' ? 'Congregado' : fixedTipoPessoa}
+              {personTypeLabel(fixedTipoPessoa)}
             </label>
           ) : (
-            personTypeOptions.map((option) => (
+            availablePersonTypes.map((option) => (
               <label key={option.value} className={form.tipoPessoa === option.value ? 'active' : undefined}>
                 <input
                   type="radio"
@@ -589,7 +772,9 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
         </div>
         <p className="selection-note">
           {isAdminMode
-            ? 'Registro feito pela administração, sem criar acesso de login para a pessoa.'
+            ? isMemberCongregadoOnly
+              ? 'Registro feito pela administração para classificar a pessoa como membro ou congregado, sem criar login e senha.'
+              : 'Registro feito pela administração, sem criar acesso de login para a pessoa.'
             : isCongregado
               ? 'Preencha os dados de congregado. O batismo será informado pela administração quando houver promoção a membro.'
               : isMembro
@@ -605,6 +790,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
             Nome completo
             <RequiredHint />
             <input
+              className={fieldErrorClass('nomeCompleto')}
               value={form.nomeCompleto}
               onChange={(event) => updateField('nomeCompleto', event.target.value)}
               placeholder="Nome e sobrenome"
@@ -617,6 +803,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
               Convidado por
               <RequiredHint />
               <input
+                className={fieldErrorClass('convidadoPor')}
                 value={form.convidadoPor}
                 onChange={(event) => updateField('convidadoPor', event.target.value)}
                 placeholder="Nome do membro que convidou"
@@ -632,18 +819,25 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
                 CPF
                 <RequiredHint />
                 <input
+                  className={fieldErrorClass('cpf')}
                   value={form.cpf}
                   onChange={(event) => updateField('cpf', maskCpf(event.target.value))}
                   inputMode="numeric"
                   placeholder="000.000.000-00"
                 />
                 {fieldError('cpf')}
+                {duplicateCpfAlert(true)}
               </label>
 
               <label>
                 RG
-                <RequiredHint />
-                <input value={form.rg} onChange={(event) => updateField('rg', event.target.value)} placeholder="Número do RG" />
+                <span className="optional-tag">(opcional)</span>
+                <input
+                  className={fieldErrorClass('rg')}
+                  value={form.rg}
+                  onChange={(event) => updateField('rg', event.target.value)}
+                  placeholder="Número do RG"
+                />
                 {fieldError('rg')}
               </label>
             </>
@@ -653,6 +847,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
             Data de nascimento
             <RequiredHint />
             <input
+              className={fieldErrorClass('dataNascimento')}
               type="date"
               value={form.dataNascimento}
               onChange={(event) => updateField('dataNascimento', event.target.value)}
@@ -663,7 +858,11 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
           <label>
             Congregação
             <RequiredHint />
-            <select value={form.congregacao} onChange={(event) => updateField('congregacao', event.target.value)}>
+            <select
+              className={fieldErrorClass('congregacao')}
+              value={form.congregacao}
+              onChange={(event) => updateField('congregacao', event.target.value)}
+            >
               <option value="">Selecione</option>
               {activeCongregations.map((congregation) => (
                 <option key={congregation.id} value={congregation.id}>
@@ -686,6 +885,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
             Telefone
             <RequiredHint />
             <input
+              className={fieldErrorClass('telefone')}
               value={form.telefone}
               onChange={(event) => updateField('telefone', maskPhone(event.target.value))}
               inputMode="numeric"
@@ -695,12 +895,13 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
           </label>
 
           {isFullCadastro ? (
-            <label className="checkbox-line">
+            <label className="checkbox-line whatsapp-option">
               <input
                 type="checkbox"
                 checked={form.possuiWhatsapp}
                 onChange={(event) => updateField('possuiWhatsapp', event.target.checked)}
               />
+              <MessageCircle aria-hidden="true" />
               Este número tem WhatsApp
             </label>
           ) : null}
@@ -708,6 +909,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
           <label>
             {isAdminMode ? 'E-mail de contato' : 'E-mail do acesso'}
             <input
+              className={fieldErrorClass('email')}
               type="email"
               value={form.email}
               readOnly={!isAdminMode}
@@ -726,6 +928,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
               <label>
                 <span>CEP <span className="optional-tag">(opcional)</span></span>
                 <input
+                  className={fieldErrorClass('endereco.cep')}
                   value={form.endereco.cep}
                   onChange={(event) => updateAddress('cep', maskCep(event.target.value))}
                   onBlur={(event) => handleCepLookup(event.target.value)}
@@ -745,6 +948,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
                 Tipo de logradouro
                 <RequiredHint />
                 <select
+                  className={fieldErrorClass('endereco.tipoLogradouro')}
                   value={form.endereco.tipoLogradouro}
                   onChange={(event) => updateAddress('tipoLogradouro', event.target.value)}
                 >
@@ -761,20 +965,31 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
               <label className="wide-field">
                 Nome do logradouro
                 <RequiredHint />
-                <input value={form.endereco.rua} onChange={(event) => updateAddress('rua', event.target.value)} placeholder="Ex.: das Flores" />
+                <input
+                  className={fieldErrorClass('endereco.rua')}
+                  value={form.endereco.rua}
+                  onChange={(event) => updateAddress('rua', event.target.value)}
+                  placeholder="Ex.: das Flores"
+                />
                 {fieldError('endereco.rua')}
               </label>
 
               <label>
                 Número
                 <RequiredHint />
-                <input value={form.endereco.numero} onChange={(event) => updateAddress('numero', event.target.value)} placeholder="Nº" />
+                <input
+                  className={fieldErrorClass('endereco.numero')}
+                  value={form.endereco.numero}
+                  onChange={(event) => updateAddress('numero', event.target.value)}
+                  placeholder="Nº"
+                />
                 {fieldError('endereco.numero')}
               </label>
 
               <label>
                 <span>Complemento <span className="optional-tag">(opcional)</span></span>
                 <input
+                  className={fieldErrorClass('endereco.complemento')}
                   value={form.endereco.complemento}
                   onChange={(event) => updateAddress('complemento', event.target.value)}
                   placeholder="Apto, bloco, casa"
@@ -784,21 +999,33 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
               <label>
                 Bairro
                 <RequiredHint />
-                <input value={form.endereco.bairro} onChange={(event) => updateAddress('bairro', event.target.value)} />
+                <input
+                  className={fieldErrorClass('endereco.bairro')}
+                  value={form.endereco.bairro}
+                  onChange={(event) => updateAddress('bairro', event.target.value)}
+                />
                 {fieldError('endereco.bairro')}
               </label>
 
               <label>
                 Cidade
                 <RequiredHint />
-                <input value={form.endereco.cidade} onChange={(event) => updateAddress('cidade', event.target.value)} />
+                <input
+                  className={fieldErrorClass('endereco.cidade')}
+                  value={form.endereco.cidade}
+                  onChange={(event) => updateAddress('cidade', event.target.value)}
+                />
                 {fieldError('endereco.cidade')}
               </label>
 
               <label>
                 Estado
                 <RequiredHint />
-                <input value={form.endereco.estado} onChange={(event) => updateAddress('estado', event.target.value)} />
+                <input
+                  className={fieldErrorClass('endereco.estado')}
+                  value={form.endereco.estado}
+                  onChange={(event) => updateAddress('estado', event.target.value)}
+                />
                 {fieldError('endereco.estado')}
               </label>
             </>
@@ -833,6 +1060,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
                     <label>
                       Cargo/função
                       <select
+                        className={fieldErrorClass('cargo')}
                         value={form.cargo ?? ''}
                         onChange={(event) => updateField('cargo', event.target.value as ChurchRole)}
                       >
@@ -849,37 +1077,23 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
                     {form.cargo === 'outro' ? (
                       <label>
                         Especificar função
-                        <input value={form.outroCargo} onChange={(event) => updateField('outroCargo', event.target.value)} />
+                        <input
+                          className={fieldErrorClass('outroCargo')}
+                          value={form.outroCargo}
+                          onChange={(event) => updateField('outroCargo', event.target.value)}
+                        />
                         {fieldError('outroCargo')}
                       </label>
                     ) : null}
                   </>
                 ) : null}
 
-                <label>
-                  Data de batismo
-                  <input
-                    type="date"
-                    value={form.dataBatismo}
-                    onChange={(event) => updateField('dataBatismo', event.target.value)}
-                  />
-                  {fieldError('dataBatismo')}
-                </label>
               </>
             ) : isMembro ? (
               <>
                 <p className="selection-note wide-field">
                   Cargo ou função ministerial será atribuído pela administração após a aprovação do cadastro.
                 </p>
-                <label>
-                  Data de batismo
-                  <input
-                    type="date"
-                    value={form.dataBatismo}
-                    onChange={(event) => updateField('dataBatismo', event.target.value)}
-                  />
-                  {fieldError('dataBatismo')}
-                </label>
               </>
             ) : (
               <p className="selection-note wide-field">
@@ -887,10 +1101,13 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
               </p>
             )}
 
+            {baptismDateField()}
+
             <label>
               <span>Data de aceitação {isCongregado ? null : <span className="optional-tag">(opcional)</span>}</span>
               {isCongregado ? <RequiredHint /> : null}
               <input
+                className={fieldErrorClass('dataAceitacao')}
                 type="date"
                 value={form.dataAceitacao}
                 onChange={(event) => updateField('dataAceitacao', event.target.value)}
@@ -978,11 +1195,16 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
         <legend>Observações</legend>
         <label className="wide-field notes-field">
           Observações (opcional)
-          <textarea value={form.observacoes} onChange={(event) => updateField('observacoes', event.target.value)} rows={4} />
+          <textarea
+            className={fieldErrorClass('observacoes')}
+            value={form.observacoes}
+            onChange={(event) => updateField('observacoes', event.target.value)}
+            rows={4}
+          />
         </label>
       </fieldset>
 
-      <label className="privacy-line">
+      <label className={lineErrorClass('consentimentoLgpd', 'privacy-line')}>
         <input
           type="checkbox"
           checked={form.consentimentoLgpd}
@@ -995,6 +1217,8 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
         </span>
       </label>
       {fieldError('consentimentoLgpd')}
+
+      {duplicateCpfAlert()}
 
       <button className="primary-action" type="submit" disabled={status === 'sending'}>
         {status === 'sending' ? 'Enviando...' : 'Enviar cadastro'}
@@ -1013,6 +1237,27 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
       ) : null}
 
       {status === 'error' ? <div className="form-alert error">Não foi possível enviar agora. Tente novamente.</div> : null}
+
+      {floatingNotice ? (
+        <div className="floating-notice-backdrop" role="presentation">
+          <div className="floating-notice" role="dialog" aria-modal="true" aria-labelledby="baptism-notice-title">
+            <button
+              aria-label="Fechar aviso"
+              className="floating-notice-close"
+              onClick={() => setFloatingNotice('')}
+              type="button"
+            >
+              <X aria-hidden="true" />
+            </button>
+            <ShieldCheck aria-hidden="true" />
+            <h3 id="baptism-notice-title">Cadastro como membro não permitido</h3>
+            <p>{floatingNotice}</p>
+            <button className="primary-action" onClick={() => setFloatingNotice('')} type="button">
+              Entendi
+            </button>
+          </div>
+        </div>
+      ) : null}
     </form>
   )
 }
