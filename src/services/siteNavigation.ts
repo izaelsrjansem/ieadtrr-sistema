@@ -3,7 +3,31 @@ import { db } from '../lib/firebase'
 import type { NavigationIconKey, NavigationItem } from '../types'
 
 const localStorageKey = 'ieadtrr-site-navigation'
-const navigationIconKeys: NavigationIconKey[] = ['none', 'home', 'church', 'calendar', 'book', 'users', 'file', 'megaphone', 'map']
+const navigationIconKeys: NavigationIconKey[] = [
+  'none',
+  'home',
+  'church',
+  'calendar',
+  'book',
+  'users',
+  'file',
+  'megaphone',
+  'map',
+  'autofalante',
+  'phone',
+  'mail',
+  'message',
+  'heart',
+  'star',
+  'gift',
+  'clock',
+  'info',
+  'handshake',
+  'help',
+  'music',
+  'video',
+  'sparkles',
+]
 
 export const defaultNavigationItems: NavigationItem[] = [
   {

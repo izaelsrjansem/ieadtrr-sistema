@@ -173,6 +173,20 @@ export type NavigationIconKey =
   | 'file'
   | 'megaphone'
   | 'map'
+  | 'autofalante'
+  | 'phone'
+  | 'mail'
+  | 'message'
+  | 'heart'
+  | 'star'
+  | 'gift'
+  | 'clock'
+  | 'info'
+  | 'handshake'
+  | 'help'
+  | 'music'
+  | 'video'
+  | 'sparkles'
 
 export type NavigationItem = {
   id: string
