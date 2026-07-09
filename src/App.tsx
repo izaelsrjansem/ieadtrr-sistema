@@ -299,6 +299,34 @@ function MapPicker({
   )
 }
 
+async function reverseGeocode(lat: number, lng: number): Promise<string> {
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&addressdetails=1&accept-language=pt-BR`
+  const response = await fetch(url, { headers: { Accept: 'application/json' } })
+  const data = (await response.json()) as {
+    address?: {
+      road?: string
+      pedestrian?: string
+      footway?: string
+      house_number?: string
+      suburb?: string
+      neighbourhood?: string
+      quarter?: string
+      city_district?: string
+      city?: string
+      town?: string
+      municipality?: string
+    }
+  }
+
+  const address = data.address ?? {}
+  const road = address.road || address.pedestrian || address.footway || ''
+  const numero = address.house_number || ''
+  const bairro = address.suburb || address.neighbourhood || address.quarter || address.city_district || ''
+  const cidade = address.city || address.town || address.municipality || ''
+
+  return [road ? (numero ? `${road}, ${numero}` : road) : '', bairro, cidade].filter(Boolean).join(', ')
+}
+
 function CongregationMiniMap({ congregation }: { congregation?: Congregation | null }) {
   if (!hasCoordinates(congregation)) {
     return (
@@ -1991,6 +2019,7 @@ function CongregationManager() {
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [error, setError] = useState('')
   const [showMapPicker, setShowMapPicker] = useState(false)
+  const [addressStatus, setAddressStatus] = useState<'idle' | 'loading' | 'error'>('idle')
 
   useEffect(() => subscribeCongregations(setItems), [])
 
@@ -2034,6 +2063,22 @@ function CongregationManager() {
     setError('')
   }
 
+  async function applyCoordinates(lat: number, lng: number) {
+    setForm((current) => ({ ...current, latitude: lat.toFixed(6), longitude: lng.toFixed(6) }))
+    setStatus('idle')
+    setAddressStatus('loading')
+
+    try {
+      const address = await reverseGeocode(lat, lng)
+      if (address) {
+        setForm((current) => ({ ...current, endereco: address }))
+      }
+      setAddressStatus('idle')
+    } catch {
+      setAddressStatus('error')
+    }
+  }
+
   function useCurrentLocation() {
     if (!navigator.geolocation) {
       setError('O navegador não liberou geolocalização.')
@@ -2042,8 +2087,7 @@ function CongregationManager() {
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        updateForm('latitude', position.coords.latitude.toFixed(6))
-        updateForm('longitude', position.coords.longitude.toFixed(6))
+        void applyCoordinates(position.coords.latitude, position.coords.longitude)
       },
       () => setError('Não foi possível obter a localização atual.'),
     )
@@ -2135,8 +2179,8 @@ function CongregationManager() {
           <label>
             Tipo interno
             <select value={form.tipo} onChange={(event) => updateForm('tipo', event.target.value as 'sede' | 'congregacao')}>
-              <option value="sede">Sede</option>
               <option value="congregacao">Congregação</option>
+              <option value="sede">Sede</option>
             </select>
           </label>
 
@@ -2157,6 +2201,11 @@ function CongregationManager() {
               onChange={(event) => updateForm('endereco', event.target.value)}
               placeholder="Rua, número, bairro, cidade"
             />
+            {addressStatus === 'loading' ? (
+              <small className="field-hint">Buscando endereço pela localização...</small>
+            ) : addressStatus === 'error' ? (
+              <small className="field-hint">Não foi possível obter o endereço. Preencha manualmente.</small>
+            ) : null}
           </label>
 
           <label>
@@ -2209,10 +2258,7 @@ function CongregationManager() {
           <MapPicker
             latitude={form.latitude ? Number(form.latitude) : undefined}
             longitude={form.longitude ? Number(form.longitude) : undefined}
-            onPick={(lat, lng) => {
-              updateForm('latitude', String(lat))
-              updateForm('longitude', String(lng))
-            }}
+            onPick={(lat, lng) => void applyCoordinates(lat, lng)}
           />
         ) : null}
 
