@@ -119,7 +119,8 @@ Congregações:
 - Campos principais: `nome`, `tipo`, `categoria`, `endereco`, `pastorResponsavel`, `telefone`, `latitude`, `longitude`, `ativa`.
 - Classificação (`categoria`): `capital` (`Capital`), `interior` (`Interior`), `zona_rural` (`Zona Rural de Boa Vista`). Valores legados (`capital_sede`/`capital_filial` → `capital`, `interior_filial` → `interior`) são convertidos na leitura por `normalizeCongregationCategory` em `src/services/congregations.ts`.
 - Admin cria/edita/suprime em `/admin` no `CongregationManager`; o visitante só escolhe a igreja específica, sem escolher categoria. Filtro da lista: `Todas`/`Capital`/`Interior`/`Zona Rural`.
-- Localização (opcional): botões **Usar localização atual** (geolocalização do navegador) e **Indicar no mapa** (mapa interativo Leaflet, carregado via CDN no `index.html`, clique fixa o marcador e preenche latitude/longitude); latitude/longitude também podem ser digitadas à mão e **não são obrigatórias**.
+- Tipo interno: `congregacao` (padrão) ou `sede`; a lista mostra Congregação primeiro.
+- Localização (opcional): botões **Usar localização atual** (geolocalização do navegador) e **Indicar no mapa** (mapa interativo Leaflet, carregado via CDN no `index.html`, clique fixa o marcador). Nos dois casos, além de latitude/longitude, o **endereço é preenchido automaticamente** (rua, número, bairro, cidade) por geocodificação reversa via Nominatim/OpenStreetMap (`reverseGeocode` em `App.tsx`). Latitude/longitude também podem ser digitadas à mão e **não são obrigatórias**.
 - Mapas pequenos de exibição usam iframe do OpenStreetMap a partir de `latitude` e `longitude`.
 
 Registros de presença:
