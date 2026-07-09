@@ -293,6 +293,10 @@ function fileNames(files: FileList | null): string {
     .join(', ')
 }
 
+function RequiredHint() {
+  return <span className="required-hint">Campo obrigatório</span>
+}
+
 export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: RegistrationFormProps) {
   const { firebaseUser, profile } = useAuth()
   const isAdminMode = mode === 'admin'
@@ -599,13 +603,19 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
         <div className="form-grid">
           <label className={isFullCadastro ? undefined : 'wide-field'}>
             Nome completo
-            <input value={form.nomeCompleto} onChange={(event) => updateField('nomeCompleto', event.target.value)} />
+            <RequiredHint />
+            <input
+              value={form.nomeCompleto}
+              onChange={(event) => updateField('nomeCompleto', event.target.value)}
+              placeholder="Nome e sobrenome"
+            />
             {fieldError('nomeCompleto')}
           </label>
 
           {isConvidado ? (
             <label className="wide-field">
               Convidado por
+              <RequiredHint />
               <input
                 value={form.convidadoPor}
                 onChange={(event) => updateField('convidadoPor', event.target.value)}
@@ -620,6 +630,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
             <>
               <label>
                 CPF
+                <RequiredHint />
                 <input
                   value={form.cpf}
                   onChange={(event) => updateField('cpf', maskCpf(event.target.value))}
@@ -631,7 +642,8 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
 
               <label>
                 RG
-                <input value={form.rg} onChange={(event) => updateField('rg', event.target.value)} />
+                <RequiredHint />
+                <input value={form.rg} onChange={(event) => updateField('rg', event.target.value)} placeholder="Número do RG" />
                 {fieldError('rg')}
               </label>
             </>
@@ -639,6 +651,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
 
           <label>
             Data de nascimento
+            <RequiredHint />
             <input
               type="date"
               value={form.dataNascimento}
@@ -649,6 +662,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
 
           <label>
             Congregação
+            <RequiredHint />
             <select value={form.congregacao} onChange={(event) => updateField('congregacao', event.target.value)}>
               <option value="">Selecione</option>
               {activeCongregations.map((congregation) => (
@@ -670,6 +684,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
         <div className="form-grid">
           <label>
             Telefone
+            <RequiredHint />
             <input
               value={form.telefone}
               onChange={(event) => updateField('telefone', maskPhone(event.target.value))}
@@ -709,7 +724,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
           {isFullCadastro ? (
             <>
               <label>
-                CEP
+                <span>CEP <span className="optional-tag">(opcional)</span></span>
                 <input
                   value={form.endereco.cep}
                   onChange={(event) => updateAddress('cep', maskCep(event.target.value))}
@@ -728,6 +743,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
 
               <label>
                 Tipo de logradouro
+                <RequiredHint />
                 <select
                   value={form.endereco.tipoLogradouro}
                   onChange={(event) => updateAddress('tipoLogradouro', event.target.value)}
@@ -744,38 +760,44 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
 
               <label className="wide-field">
                 Nome do logradouro
-                <input value={form.endereco.rua} onChange={(event) => updateAddress('rua', event.target.value)} />
+                <RequiredHint />
+                <input value={form.endereco.rua} onChange={(event) => updateAddress('rua', event.target.value)} placeholder="Ex.: das Flores" />
                 {fieldError('endereco.rua')}
               </label>
 
               <label>
                 Número
-                <input value={form.endereco.numero} onChange={(event) => updateAddress('numero', event.target.value)} />
+                <RequiredHint />
+                <input value={form.endereco.numero} onChange={(event) => updateAddress('numero', event.target.value)} placeholder="Nº" />
                 {fieldError('endereco.numero')}
               </label>
 
               <label>
-                Complemento
+                <span>Complemento <span className="optional-tag">(opcional)</span></span>
                 <input
                   value={form.endereco.complemento}
                   onChange={(event) => updateAddress('complemento', event.target.value)}
+                  placeholder="Apto, bloco, casa"
                 />
               </label>
 
               <label>
                 Bairro
+                <RequiredHint />
                 <input value={form.endereco.bairro} onChange={(event) => updateAddress('bairro', event.target.value)} />
                 {fieldError('endereco.bairro')}
               </label>
 
               <label>
                 Cidade
+                <RequiredHint />
                 <input value={form.endereco.cidade} onChange={(event) => updateAddress('cidade', event.target.value)} />
                 {fieldError('endereco.cidade')}
               </label>
 
               <label>
                 Estado
+                <RequiredHint />
                 <input value={form.endereco.estado} onChange={(event) => updateAddress('estado', event.target.value)} />
                 {fieldError('endereco.estado')}
               </label>
@@ -866,7 +888,8 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
             )}
 
             <label>
-              Data de aceitação
+              <span>Data de aceitação {isCongregado ? null : <span className="optional-tag">(opcional)</span>}</span>
+              {isCongregado ? <RequiredHint /> : null}
               <input
                 type="date"
                 value={form.dataAceitacao}
@@ -966,7 +989,10 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa }: Registratio
           onChange={(event) => updateField('consentimentoLgpd', event.target.checked)}
         />
         <ShieldCheck aria-hidden="true" />
-        Autorizo o uso desses dados para fins de cadastro, organização interna e comunicação da igreja.
+        <span>
+          Autorizo o uso desses dados para fins de cadastro, organização interna e comunicação da igreja.{' '}
+          <span className="required-hint">Campo obrigatório</span>
+        </span>
       </label>
       {fieldError('consentimentoLgpd')}
 

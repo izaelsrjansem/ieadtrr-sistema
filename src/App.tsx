@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   BookOpen,
   CalendarDays,
@@ -127,15 +127,16 @@ const requestStatusFilters: Array<{ value: MembershipRequestStatus | 'todos'; la
 ]
 
 const congregationCategoryLabels: Record<CongregationCategory, string> = {
-  capital_sede: 'Igreja da capital',
-  capital_filial: 'Filial na capital',
-  interior_filial: 'Filial no interior',
+  capital: 'Capital',
+  interior: 'Interior',
+  zona_rural: 'Zona Rural de Boa Vista',
 }
 
-const congregationAreaFilters: Array<{ value: 'todas' | 'capital' | 'interior'; label: string }> = [
+const congregationAreaFilters: Array<{ value: 'todas' | CongregationCategory; label: string }> = [
   { value: 'todas', label: 'Todas' },
   { value: 'capital', label: 'Capital' },
   { value: 'interior', label: 'Interior' },
+  { value: 'zona_rural', label: 'Zona Rural' },
 ]
 
 const visitTypeLabels: Record<VisitPersonType, string> = {
@@ -229,6 +230,73 @@ function hasCoordinates(congregation?: Congregation | null): congregation is Con
   longitude: number
 } {
   return typeof congregation?.latitude === 'number' && typeof congregation.longitude === 'number'
+}
+
+function RequiredHint() {
+  return <span className="required-hint">Campo obrigatório</span>
+}
+
+const BOA_VISTA_COORDS: [number, number] = [2.8235, -60.6758]
+
+function MapPicker({
+  latitude,
+  longitude,
+  onPick,
+}: {
+  latitude?: number
+  longitude?: number
+  onPick: (lat: number, lng: number) => void
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const mapRef = useRef<{ remove: () => void } | null>(null)
+  const onPickRef = useRef(onPick)
+  onPickRef.current = onPick
+
+  useEffect(() => {
+    const leaflet = (window as unknown as { L?: any }).L
+    if (!leaflet || !containerRef.current || mapRef.current) {
+      return
+    }
+
+    const hasStart = typeof latitude === 'number' && typeof longitude === 'number'
+    const start: [number, number] = hasStart ? [latitude as number, longitude as number] : BOA_VISTA_COORDS
+    const map = leaflet.map(containerRef.current).setView(start, hasStart ? 15 : 12)
+    leaflet
+      .tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap',
+      })
+      .addTo(map)
+
+    let marker = hasStart ? leaflet.marker(start).addTo(map) : null
+
+    map.on('click', (event: { latlng: { lat: number; lng: number } }) => {
+      const lat = Number(event.latlng.lat.toFixed(6))
+      const lng = Number(event.latlng.lng.toFixed(6))
+      if (marker) {
+        marker.setLatLng([lat, lng])
+      } else {
+        marker = leaflet.marker([lat, lng]).addTo(map)
+      }
+      onPickRef.current(lat, lng)
+    })
+
+    mapRef.current = map
+    window.setTimeout(() => map.invalidateSize(), 120)
+
+    return () => {
+      map.remove()
+      mapRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  return (
+    <div className="map-picker">
+      <div className="map-picker-canvas" ref={containerRef} />
+      <p className="field-hint">Clique no mapa para marcar o local exato da igreja.</p>
+    </div>
+  )
 }
 
 function CongregationMiniMap({ congregation }: { congregation?: Congregation | null }) {
@@ -873,7 +941,7 @@ function CongregationsPage({ settings }: { settings?: NavigationItem }) {
           <article className="info-card" key={congregation.id}>
             <MapPin aria-hidden="true" />
             <h2>{congregation.nome}</h2>
-            <span>{congregationCategoryLabels[congregation.categoria ?? 'capital_filial']}</span>
+            <span>{congregationCategoryLabels[congregation.categoria ?? 'capital']}</span>
             <p>{congregation.endereco}</p>
             <span>{congregation.pastorResponsavel}</span>
             <span>{congregation.telefone}</span>
@@ -1893,7 +1961,7 @@ type CongregationFormState = {
 const emptyCongregationForm: CongregationFormState = {
   nome: '',
   tipo: 'congregacao',
-  categoria: 'capital_filial',
+  categoria: 'capital',
   endereco: '',
   pastorResponsavel: '',
   telefone: '',
@@ -1919,9 +1987,10 @@ function CongregationManager() {
   const [items, setItems] = useState<Congregation[]>(fallbackCongregations)
   const [form, setForm] = useState<CongregationFormState>(emptyCongregationForm)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [areaFilter, setAreaFilter] = useState<'todas' | 'capital' | 'interior'>('todas')
+  const [areaFilter, setAreaFilter] = useState<'todas' | CongregationCategory>('todas')
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [error, setError] = useState('')
+  const [showMapPicker, setShowMapPicker] = useState(false)
 
   useEffect(() => subscribeCongregations(setItems), [])
 
@@ -1934,12 +2003,7 @@ function CongregationManager() {
       return true
     }
 
-    const category = congregation.categoria ?? 'capital_filial'
-    if (areaFilter === 'capital') {
-      return category === 'capital_sede' || category === 'capital_filial'
-    }
-
-    return category === 'interior_filial'
+    return (congregation.categoria ?? 'capital') === areaFilter
   })
 
   function updateForm<K extends keyof CongregationFormState>(field: K, value: CongregationFormState[K]) {
@@ -1959,7 +2023,7 @@ function CongregationManager() {
     setForm({
       nome: congregation.nome,
       tipo: congregation.tipo,
-      categoria: congregation.categoria ?? 'capital_filial',
+      categoria: congregation.categoria ?? 'capital',
       endereco: congregation.endereco,
       pastorResponsavel: congregation.pastorResponsavel,
       telefone: congregation.telefone,
@@ -2041,18 +2105,21 @@ function CongregationManager() {
         <p>Inclua, edite ou suprima igrejas. O visitante escolhe apenas a igreja; a classificação fica aqui.</p>
       </div>
 
-      {error ? <div className="form-alert error">{error}</div> : null}
-      {status === 'saved' ? <div className="form-alert success">Congregação atualizada.</div> : null}
-
       <form className="congregation-editor" onSubmit={handleSubmit}>
         <div className="form-grid">
           <label>
             Nome da igreja
-            <input value={form.nome} onChange={(event) => updateForm('nome', event.target.value)} />
+            <RequiredHint />
+            <input
+              value={form.nome}
+              onChange={(event) => updateForm('nome', event.target.value)}
+              placeholder="Ex.: Congregação Jardim Floresta"
+            />
           </label>
 
           <label>
             Classificação
+            <RequiredHint />
             <select
               value={form.categoria}
               onChange={(event) => updateForm('categoria', event.target.value as CongregationCategory)}
@@ -2075,35 +2142,81 @@ function CongregationManager() {
 
           <label>
             Telefone
-            <input value={form.telefone} onChange={(event) => updateForm('telefone', event.target.value)} />
+            <input
+              value={form.telefone}
+              onChange={(event) => updateForm('telefone', event.target.value)}
+              placeholder="(95) 99999-9999"
+            />
           </label>
 
           <label className="wide-field">
             Endereço
-            <input value={form.endereco} onChange={(event) => updateForm('endereco', event.target.value)} />
+            <RequiredHint />
+            <input
+              value={form.endereco}
+              onChange={(event) => updateForm('endereco', event.target.value)}
+              placeholder="Rua, número, bairro, cidade"
+            />
           </label>
 
           <label>
             Responsável
-            <input value={form.pastorResponsavel} onChange={(event) => updateForm('pastorResponsavel', event.target.value)} />
+            <input
+              value={form.pastorResponsavel}
+              onChange={(event) => updateForm('pastorResponsavel', event.target.value)}
+              placeholder="Nome do dirigente ou pastor"
+            />
           </label>
 
           <label>
-            Latitude
-            <input value={form.latitude} onChange={(event) => updateForm('latitude', event.target.value)} inputMode="decimal" />
+            <span>Latitude <span className="optional-tag">(opcional)</span></span>
+            <input
+              value={form.latitude}
+              onChange={(event) => updateForm('latitude', event.target.value)}
+              inputMode="decimal"
+              placeholder="Ex.: 2.823500"
+            />
           </label>
 
           <label>
-            Longitude
-            <input value={form.longitude} onChange={(event) => updateForm('longitude', event.target.value)} inputMode="decimal" />
+            <span>Longitude <span className="optional-tag">(opcional)</span></span>
+            <input
+              value={form.longitude}
+              onChange={(event) => updateForm('longitude', event.target.value)}
+              inputMode="decimal"
+              placeholder="Ex.: -60.675800"
+            />
           </label>
         </div>
 
-        <div className="editor-actions">
+        <div className="location-tools">
+          <span className="location-tools-label">Localização (opcional):</span>
           <button className="secondary-admin-action" type="button" onClick={useCurrentLocation}>
             <Navigation aria-hidden="true" />
             Usar localização atual
           </button>
+          <button
+            className={showMapPicker ? 'secondary-admin-action active' : 'secondary-admin-action'}
+            type="button"
+            onClick={() => setShowMapPicker((current) => !current)}
+          >
+            <MapPin aria-hidden="true" />
+            {showMapPicker ? 'Fechar mapa' : 'Indicar no mapa'}
+          </button>
+        </div>
+
+        {showMapPicker ? (
+          <MapPicker
+            latitude={form.latitude ? Number(form.latitude) : undefined}
+            longitude={form.longitude ? Number(form.longitude) : undefined}
+            onPick={(lat, lng) => {
+              updateForm('latitude', String(lat))
+              updateForm('longitude', String(lng))
+            }}
+          />
+        ) : null}
+
+        <div className="editor-actions">
           <button className="primary-action" type="submit" disabled={status === 'saving'}>
             <PlusCircle aria-hidden="true" />
             {editingId ? 'Salvar alteração' : 'Adicionar igreja'}
@@ -2115,6 +2228,9 @@ function CongregationManager() {
             </button>
           ) : null}
         </div>
+
+        {error ? <div className="form-alert error">{error}</div> : null}
+        {status === 'saved' ? <div className="form-alert success">Congregação atualizada.</div> : null}
       </form>
 
       <CongregationMiniMap congregation={selectedMapCongregation} />
@@ -2144,7 +2260,7 @@ function CongregationManager() {
             <Building2 aria-hidden="true" />
             <div>
               <strong>{congregation.nome}</strong>
-              <span>{congregationCategoryLabels[congregation.categoria ?? 'capital_filial']}</span>
+              <span>{congregationCategoryLabels[congregation.categoria ?? 'capital']}</span>
               <p>{congregation.endereco}</p>
             </div>
             <button className="secondary-admin-action" type="button" onClick={() => editCongregation(congregation)}>
@@ -2847,7 +2963,7 @@ function VisitorTracking() {
                     <td>{formatFirestoreTime(record.registeredAt)}</td>
                     <td>{visitSessionLabels[record.session]}</td>
                     <td>{congregation?.nome ?? record.congregationName}</td>
-                    <td>{congregationCategoryLabels[congregation?.categoria ?? 'capital_filial']}</td>
+                    <td>{congregationCategoryLabels[congregation?.categoria ?? 'capital']}</td>
                   </tr>
                 )
               })}

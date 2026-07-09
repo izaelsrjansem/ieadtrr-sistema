@@ -1088,6 +1088,61 @@ textarea:focus {
   line-height: 1.4;
 }
 
+.required-hint {
+  align-self: start;
+  margin: 0.1rem 0 0.05rem;
+  color: var(--brick);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.required-hint::before {
+  content: "• ";
+}
+
+.optional-tag {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.location-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+
+.location-tools-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.location-tools .secondary-admin-action.active {
+  color: #ffffff;
+  border-color: transparent;
+  background: var(--green);
+}
+
+.map-picker {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+
+.map-picker-canvas {
+  width: 100%;
+  height: 320px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  z-index: 0;
+}
+
 .type-picker {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

@@ -119,7 +119,7 @@ export type OfficialMember = MemberRegistration & {
   approvedBy?: string
 }
 
-export type CongregationCategory = 'capital_sede' | 'capital_filial' | 'interior_filial'
+export type CongregationCategory = 'capital' | 'interior' | 'zona_rural'
 
 export type Congregation = {
   id: string

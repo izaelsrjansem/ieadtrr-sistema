@@ -64,7 +64,7 @@ Rotas de área restrita, agora protegidas por autenticação real (ver seção A
   - **Aprovar solicitações de membro** (`MembershipApprovals`): lê `membershipRequests` em tempo real **filtrando só `tipoPessoa === 'membro'`** (visitante/convidado não passam por aprovação), com filtros de status e botões Aprovar/Rejeitar. Ao aprovar, uma operação em lote cria/atualiza o registro oficial em `members/{requestId}`, marca a solicitação como aprovada e promove para membro a conta vinculada por `userId` ou pelo mesmo e-mail. Contas de diretoria/admin preservam o perfil de acesso.
   - **Cadastro oficial de membros** (`MemberDirectory`): lista em tempo real a coleção `members`, mostra total de ativos e permite buscar por nome, congregação, e-mail ou telefone. CPF e RG não são exibidos na listagem.
   - **Cadastro nominal administrativo** (`AdminNominalRegistration`): ferramenta recolhível dentro do `/admin` para registrar visitante, convidado ou membro **sem criar login e senha** para a pessoa. Usa `RegistrationForm mode="admin"` e grava em `membershipRequests`.
-  - **Cadastro de congregações** (`CongregationManager`): permite ao admin incluir, editar e suprimir igrejas/congregações, informando classificação (`Igreja da capital`, `Filial na capital`, `Filial no interior`), endereço, responsável, telefone, latitude e longitude. A lista de igrejas no admin tem filtro em botões `Todas`, `Capital` e `Interior`. A supressão marca `ativa: false`.
+  - **Cadastro de congregações** (`CongregationManager`): permite ao admin incluir, editar e suprimir igrejas/congregações, informando classificação (`Capital`, `Interior`, `Zona Rural de Boa Vista`), endereço, responsável, telefone e localização (opcional) via "Usar localização atual", "Indicar no mapa" (Leaflet) ou digitação de latitude/longitude. A lista de igrejas no admin tem filtro em botões `Todas`, `Capital`, `Interior` e `Zona Rural`. A supressão marca `ativa: false`.
   - **Progressão espiritual e cargos** (`ProfileProgressionManager`): lista visitantes/convidados, congregados e membros. Admin promove visitante/convidado para congregado, congregado para membro informando data de batismo, e atribui/remove cargo somente em perfil de membro.
   - **Perfis de acesso** (`UserAccessManager`): lista a coleção `users` e permite ao admin mudar o `role` de cada pessoa (pendente/congregado/membro/diretoria/administrador). É aqui que se cria um novo administrador. O admin não pode alterar o próprio perfil (evita se trancar para fora).
   - **Banner público / Cultos da semana** (`BannerManager`): troca as 4 fotos (prévia local, ainda sem Storage).
@@ -117,9 +117,10 @@ Congregações:
 - Coleção: `congregations`.
 - O site usa as congregações do Firestore; se a coleção estiver vazia, usa o fallback local de `src/data/church.ts`.
 - Campos principais: `nome`, `tipo`, `categoria`, `endereco`, `pastorResponsavel`, `telefone`, `latitude`, `longitude`, `ativa`.
-- Categorias: `capital_sede` (`Igreja da capital`), `capital_filial` (`Filial na capital`), `interior_filial` (`Filial no interior`).
-- Admin cria/edita/suprime em `/admin` no `CongregationManager`; o visitante só escolhe a igreja específica, sem escolher categoria.
-- Mapas pequenos usam iframe do OpenStreetMap a partir de `latitude` e `longitude`.
+- Classificação (`categoria`): `capital` (`Capital`), `interior` (`Interior`), `zona_rural` (`Zona Rural de Boa Vista`). Valores legados (`capital_sede`/`capital_filial` → `capital`, `interior_filial` → `interior`) são convertidos na leitura por `normalizeCongregationCategory` em `src/services/congregations.ts`.
+- Admin cria/edita/suprime em `/admin` no `CongregationManager`; o visitante só escolhe a igreja específica, sem escolher categoria. Filtro da lista: `Todas`/`Capital`/`Interior`/`Zona Rural`.
+- Localização (opcional): botões **Usar localização atual** (geolocalização do navegador) e **Indicar no mapa** (mapa interativo Leaflet, carregado via CDN no `index.html`, clique fixa o marcador e preenche latitude/longitude); latitude/longitude também podem ser digitadas à mão e **não são obrigatórias**.
+- Mapas pequenos de exibição usam iframe do OpenStreetMap a partir de `latitude` e `longitude`.
 
 Registros de presença:
 
@@ -171,6 +172,8 @@ Visitante e convidado **não passam por aprovação** e **não aparecem** no pai
 - Documentos: Foto — opção **foto única** ou **frente e verso**; Cartas de mudança e recomendação — marcar "tem mais de uma página" para permitir vários arquivos ou um PDF único.
 
 Máscaras aplicadas: CPF `000.000.000-00`, Telefone `(00) 00000-0000`, CEP `00000-000`.
+
+Indicação de obrigatoriedade: campos exigidos exibem uma etiqueta discreta **"Campo obrigatório"** (classe `.required-hint`) numa linha própria, entre o rótulo e o campo (fora do input; o exemplo/placeholder fica dentro). Campos opcionais podem trazer `(opcional)` ao lado do rótulo (`.optional-tag`). Aplicado no `RegistrationForm` (conforme o tipo/perfil) e no `CongregationManager`. Componente `RequiredHint` existe local em `App.tsx` e em `RegistrationForm.tsx`.
 
 Pendente: e-mail automático de status ao membro (fica para depois — precisa de backend de envio, Cloud Functions/Blaze ou serviço externo). Uploads reais de foto/cartas dependem do Storage (ainda não criado); hoje o formulário guarda apenas os nomes dos arquivos.
 
