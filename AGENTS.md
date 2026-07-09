@@ -341,6 +341,23 @@ Próximo:
 
 - Faltam as **4 fotos reais** dos cultos (hoje 3 imagens para 4 slots).
 
+## Pendências (a fazer depois)
+
+### Seção "Vida cristã e função eclesiástica" do cadastro (`RegistrationForm`)
+
+Ajustar a seção de cargo/batismo no cadastro de **membro**:
+
+- A pergunta sobre cargo deve ser uma **seleção Sim/Não** ("Possui cargo ou função ministerial?").
+  - **Sim** → abre a **lista suspensa** para escolher qual cargo (e "outra função" quando for `outro`).
+  - **Não** → segue sem cargo para o próximo passo.
+- **Data de batismo passa a ser OBRIGATÓRIA quando o cadastro é de membro** (hoje está como opcional). Manter a validação de idade (batismo só a partir dos 12 anos).
+- No cadastro de **congregado**, essa seção de cargo **não deve aparecer** (congregado não ocupa cargo; o batismo é informado depois, quando promovido a membro).
+- Observação: hoje o seletor de cargo só aparece em `mode="admin"` (`canAdminAssignCargo = isAdminMode && isMembro`); rever se a pergunta Sim/Não deve valer também fora do modo admin, conforme decisão do usuário.
+
+### Refatorar `src/App.tsx` (3.370 linhas)
+
+Quebrar em componentes/arquivos menores (páginas públicas, painéis e cada gerenciador do admin), de forma incremental (extrair → build → commit → push), para facilitar manutenção e reduzir conflito com edições feitas no Codex.
+
 ## Próximas prioridades
 
 1. Migrar a aprovação antiga e testar o fluxo real de criação em `members` e promoção do acesso.
