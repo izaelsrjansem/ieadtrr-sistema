@@ -1562,9 +1562,6 @@ function NavigationManager({ navigationItems }: { navigationItems: NavigationIte
         </button>
       </div>
 
-      {error ? <div className="form-alert error">{error}</div> : null}
-      {status === 'saved' ? <div className="form-alert success">Menu público atualizado.</div> : null}
-
       <div className="navigation-manager-layout">
         <div className="navigation-manager-list" aria-label="Menus cadastrados">
           {orderedItems.map((item) => {
@@ -1709,6 +1706,9 @@ function NavigationManager({ navigationItems }: { navigationItems: NavigationIte
                 </button>
               ) : null}
             </div>
+
+            {error ? <div className="form-alert error">{error}</div> : null}
+            {status === 'saved' ? <div className="form-alert success">Menu público atualizado.</div> : null}
           </form>
         ) : (
           <div className="navigation-empty-state">
