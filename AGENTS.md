@@ -364,7 +364,7 @@ Quebrar em componentes/arquivos menores (páginas públicas, painéis e cada ger
 1. Migrar a aprovação antiga e testar o fluxo real de criação em `members` e promoção do acesso.
 2. Criar o Storage e persistir fotos e documentos (inclusive as fotos do banner).
 3. Trocar dados demonstrativos dos painéis `/membro` e `/diretoria` por dados reais.
-4. Página pública de agenda/eventos alimentada pelo Firestore (`events`).
+4. ~~Página pública de agenda/eventos alimentada pelo Firestore (`events`).~~ Feito: `src/services/events.ts` (`subscribeEvents` em tempo real, com `createEvent`/`updateEvent`/`deleteEvent` para diretoria) e a `AgendaPage` já consome a coleção `events`, caindo nos dados estáticos de `publicEvents` quando ainda não há registros. As regras de `events` (leitura pública, escrita da diretoria) já estavam publicadas. Falta ainda a tela de gerenciamento no `/admin` para cadastrar eventos.
 
 ## Cuidados
 

@@ -68,6 +68,7 @@ import {
   updateCongregation,
   type CongregationInput,
 } from './services/congregations'
+import { subscribeEvents } from './services/events'
 import { subscribeMembers } from './services/members'
 import { decideMembershipRequest, subscribeMembershipRequests } from './services/membership'
 import { defaultNavigationItems, saveNavigationItems, subscribeNavigationItems } from './services/siteNavigation'
@@ -90,6 +91,7 @@ import {
 import type {
   Congregation,
   CongregationCategory,
+  ChurchEvent,
   FirestoreDate,
   ChurchRole,
   AdminSectionKey,
@@ -1080,6 +1082,10 @@ function CongregationsPage({ settings }: { settings?: NavigationItem }) {
 }
 
 function AgendaPage({ settings }: { settings?: NavigationItem }) {
+  const [events, setEvents] = useState<ChurchEvent[]>(publicEvents)
+
+  useEffect(() => subscribeEvents(setEvents), [])
+
   return (
     <section className="content-section">
       <div className="section-heading">
@@ -1088,7 +1094,7 @@ function AgendaPage({ settings }: { settings?: NavigationItem }) {
         {renderPageContent(settings?.pageContent)}
       </div>
       <div className="timeline-list">
-        {publicEvents.map((event) => (
+        {events.map((event) => (
           <article key={event.id} className="timeline-item">
             <div>
               <strong>{event.data}</strong>
