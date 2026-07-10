@@ -235,6 +235,10 @@ const registrationSchema = z
         ctx.addIssue({ code: 'custom', path: ['dataAceitacao'], message: 'Informe a data de aceitação.' })
       }
 
+      if (data.tipoPessoa === 'membro' && !data.dataBatismo) {
+        ctx.addIssue({ code: 'custom', path: ['dataBatismo'], message: 'Informe a data de batismo.' })
+      }
+
       if (data.dataBatismo) {
         const age = ageBetween(data.dataNascimento, data.dataBatismo)
         if (age !== null && age < 12) {
@@ -608,7 +612,8 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
 
     return (
       <label className="baptism-date-field">
-        <span>Data de batismo <span className="optional-tag">(opcional)</span></span>
+        Data de batismo
+        <RequiredHint />
         <input
           className={fieldErrorClass('dataBatismo')}
           type="date"
@@ -616,7 +621,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
           onChange={(event) => updateField('dataBatismo', event.target.value)}
         />
         <small className="field-hint">
-          Para congregado este campo não aparece. Ele será usado quando a pessoa for cadastrada ou promovida como membro.
+          Obrigatório para membro. Para congregado este campo não aparece; ele será usado quando a pessoa for promovida a membro.
         </small>
         {baptismNotice ? (
           <span className="field-inline-alert baptism-rule-alert">
@@ -671,8 +676,11 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
         email: isAdminMode ? parsed.data.email.trim() : accountEmail || parsed.data.email.trim(),
       }
 
-      if (isAdminMode && (data.tipoPessoa === 'membro' || data.tipoPessoa === 'congregado')) {
-        const existingRegistration = await findExistingRegistrationByCpf(data.cpf)
+      if (data.tipoPessoa === 'membro' || data.tipoPessoa === 'congregado') {
+        const existingRegistration = await findExistingRegistrationByCpf(
+          data.cpf,
+          isAdminMode ? undefined : currentUid,
+        )
         if (existingRegistration) {
           setExistingCpfRegistration(existingRegistration)
           setErrors({ cpf: 'Este CPF já possui cadastro no sistema.' })
@@ -1039,26 +1047,37 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
           <div className="form-grid">
             {canAdminAssignCargo ? (
               <>
-                <label className="checkbox-line wide-field">
-                  <input
-                    type="checkbox"
-                    checked={form.possuiCargo}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        possuiCargo: event.target.checked,
-                        cargo: event.target.checked ? current.cargo : undefined,
-                        outroCargo: event.target.checked ? current.outroCargo : '',
-                      }))
-                    }
-                  />
-                  Possui cargo ou função ministerial
-                </label>
+                <div className="cargo-question wide-field">
+                  <span className="cargo-question-label">Possui cargo ou função ministerial?</span>
+                  <div className="doc-mode">
+                    <label className={form.possuiCargo ? 'active' : undefined}>
+                      <input
+                        type="radio"
+                        name="possuiCargo"
+                        checked={form.possuiCargo === true}
+                        onChange={() => setForm((current) => ({ ...current, possuiCargo: true }))}
+                      />
+                      Sim
+                    </label>
+                    <label className={form.possuiCargo === false ? 'active' : undefined}>
+                      <input
+                        type="radio"
+                        name="possuiCargo"
+                        checked={form.possuiCargo === false}
+                        onChange={() =>
+                          setForm((current) => ({ ...current, possuiCargo: false, cargo: undefined, outroCargo: '' }))
+                        }
+                      />
+                      Não
+                    </label>
+                  </div>
+                </div>
 
                 {form.possuiCargo ? (
                   <>
                     <label>
                       Cargo/função
+                      <RequiredHint />
                       <select
                         className={fieldErrorClass('cargo')}
                         value={form.cargo ?? ''}
@@ -1077,6 +1096,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
                     {form.cargo === 'outro' ? (
                       <label>
                         Especificar função
+                        <RequiredHint />
                         <input
                           className={fieldErrorClass('outroCargo')}
                           value={form.outroCargo}
@@ -1087,19 +1107,12 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
                     ) : null}
                   </>
                 ) : null}
-
               </>
             ) : isMembro ? (
-              <>
-                <p className="selection-note wide-field">
-                  Cargo ou função ministerial será atribuído pela administração após a aprovação do cadastro.
-                </p>
-              </>
-            ) : (
               <p className="selection-note wide-field">
-                Congregado ainda não recebe cargo. A função ministerial só pode ser atribuída após promoção a membro.
+                Cargo ou função ministerial será atribuído pela administração após a aprovação do cadastro.
               </p>
-            )}
+            ) : null}
 
             {baptismDateField()}
 

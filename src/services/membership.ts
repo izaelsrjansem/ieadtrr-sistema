@@ -51,11 +51,28 @@ function toExistingCpfRegistration(
   }
 }
 
-export async function findExistingRegistrationByCpf(cpf: string): Promise<ExistingCpfRegistration | null> {
+export async function findExistingRegistrationByCpf(
+  cpf: string,
+  excludeUserId?: string,
+): Promise<ExistingCpfRegistration | null> {
   const cpfDigits = onlyDigits(cpf)
 
   if (cpfDigits.length !== 11) {
     return null
+  }
+
+  // Um registro pertence ao proprio usuario quando: e o doc dele em `users`,
+  // ou tem `userId` igual ao dele em `members`/`membershipRequests`. Nesse caso
+  // nao contamos como duplicidade (permite recadastro/correcao do proprio dado).
+  const belongsToExcluded = (
+    source: ExistingCpfRegistration['source'],
+    id: string,
+    data: { userId?: string },
+  ): boolean => {
+    if (!excludeUserId) {
+      return false
+    }
+    return source === 'users' ? id === excludeUserId : data.userId === excludeUserId
   }
 
   if (!db) {
@@ -76,7 +93,11 @@ export async function findExistingRegistrationByCpf(cpf: string): Promise<Existi
   ]
 
   const officialMemberSnapshot = await getDoc(doc(db, 'members', cpfDigits))
-  if (officialMemberSnapshot.exists() && officialMemberSnapshot.data().status !== 'rejeitado') {
+  if (
+    officialMemberSnapshot.exists() &&
+    officialMemberSnapshot.data().status !== 'rejeitado' &&
+    !belongsToExcluded('members', officialMemberSnapshot.id, officialMemberSnapshot.data())
+  ) {
     return toExistingCpfRegistration(
       officialMemberSnapshot.id,
       'members',
@@ -89,7 +110,11 @@ export async function findExistingRegistrationByCpf(cpf: string): Promise<Existi
       const snapshot = await getDocs(
         query(collection(db, lookup.source), where(lookup.field, '==', lookup.value)),
       )
-      const match = snapshot.docs.find((docSnapshot) => docSnapshot.data().status !== 'rejeitado')
+      const match = snapshot.docs.find(
+        (docSnapshot) =>
+          docSnapshot.data().status !== 'rejeitado' &&
+          !belongsToExcluded(lookup.source, docSnapshot.id, docSnapshot.data()),
+      )
 
       if (match) {
         return toExistingCpfRegistration(
@@ -179,30 +204,17 @@ export async function decideMembershipRequest(
       }
     | undefined
 
+  // Vinculamos a conta de acesso apenas pelo userId da solicitação.
+  // Nao usamos e-mail como chave: o mesmo e-mail pode servir a mais de um
+  // cadastro (ex.: menor de idade usando o e-mail do responsavel), entao
+  // vincular por e-mail poderia promover a conta errada. Cadastros nominais
+  // feitos pela administracao (sem userId) nao promovem nenhuma conta.
   if (request.userId) {
     const userSnapshot = await getDoc(doc(db, 'users', request.userId))
     if (userSnapshot.exists()) {
       linkedUser = {
         uid: userSnapshot.id,
         role: userSnapshot.data().role as string | undefined,
-      }
-    }
-  }
-
-  if (!linkedUser && request.email) {
-    const normalizedEmail = request.email.trim().toLowerCase()
-    const usersSnapshot = await getDocs(collection(db, 'users'))
-    const matchingUser = usersSnapshot.docs.find(
-      (userSnapshot) =>
-        String(userSnapshot.data().email ?? '')
-          .trim()
-          .toLowerCase() === normalizedEmail,
-    )
-
-    if (matchingUser) {
-      linkedUser = {
-        uid: matchingUser.id,
-        role: matchingUser.data().role as string | undefined,
       }
     }
   }
