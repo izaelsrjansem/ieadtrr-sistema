@@ -1201,6 +1201,7 @@ function CustomPublicPage({ navigationItems }: { navigationItems: NavigationItem
 function LoginPage() {
   const [email, setEmail] = useState('')
   const [senha, setSenha] = useState('')
+  const [rememberLogin, setRememberLogin] = useState(false)
   const [status, setStatus] = useState<'idle' | 'sending' | 'reset-sent' | 'error'>('idle')
   const [errorMessage, setErrorMessage] = useState('')
   const navigate = useNavigate()
@@ -1213,7 +1214,7 @@ function LoginPage() {
     setErrorMessage('')
 
     try {
-      const credential = await signIn(email.trim(), senha)
+      const credential = await signIn(email.trim(), senha, rememberLogin)
       const loggedProfile = await getUserProfile(credential.user.uid)
       navigate(requestedPath ?? profilePanelPath(loggedProfile), { replace: true })
     } catch {
@@ -1270,6 +1271,15 @@ function LoginPage() {
             type="password"
             value={senha}
           />
+        </label>
+
+        <label className="checkbox-line login-remember-option">
+          <input
+            checked={rememberLogin}
+            onChange={(event) => setRememberLogin(event.target.checked)}
+            type="checkbox"
+          />
+          Salvar acesso para os próximos logins
         </label>
 
         <button className="primary-action" disabled={status === 'sending'} type="submit">

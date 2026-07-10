@@ -1,6 +1,9 @@
 import {
   createUserWithEmailAndPassword,
+  browserLocalPersistence,
+  browserSessionPersistence,
   sendPasswordResetEmail,
+  setPersistence,
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
@@ -11,11 +14,12 @@ import type { UserProfile } from '../types'
 
 const configErrorMessage = 'Firebase ainda não está configurado nesta instalação.'
 
-export async function signIn(email: string, password: string) {
+export async function signIn(email: string, password: string, rememberLogin = false) {
   if (!auth) {
     throw new Error(configErrorMessage)
   }
 
+  await setPersistence(auth, rememberLogin ? browserLocalPersistence : browserSessionPersistence)
   return signInWithEmailAndPassword(auth, email, password)
 }
 
