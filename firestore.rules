@@ -116,7 +116,9 @@ service cloud.firestore {
     }
 
     match /auditLogs/{document=**} {
-      allow read, write: if isAdmin();
+      allow read: if hasAdminSection('auditoria');
+      allow create: if signedIn() && request.resource.data.actorUid == request.auth.uid;
+      allow update, delete: if isAdmin();
     }
   }
 }

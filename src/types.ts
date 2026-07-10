@@ -1,5 +1,6 @@
 export type PublicPersonType = 'visitante' | 'membro' | 'convidado' | 'congregado'
 export type VisitPersonType = 'visitante' | 'convidado'
+export type CadastroSexo = 'masculino' | 'feminino'
 
 export type ChurchRole =
   | 'pastor'
@@ -28,6 +29,7 @@ export type AdminSectionKey =
   | 'presencas'
   | 'congregacoes'
   | 'usuarios'
+  | 'auditoria'
   | 'site'
 
 export type UserProfile = {
@@ -43,6 +45,7 @@ export type UserProfile = {
   convidadoPor?: string
   telefone?: string
   dataNascimento?: string
+  sexo?: CadastroSexo
   possuiWhatsapp?: boolean
   cpf?: string
   cpfDigits?: string
@@ -88,6 +91,7 @@ export type MemberRegistration = {
   cpfDigits?: string
   rg: string
   dataNascimento: string
+  sexo: CadastroSexo | ''
   tipoPessoa: PublicPersonType
   possuiCargo: boolean
   cargo?: ChurchRole
@@ -130,6 +134,22 @@ export type OfficialMember = MemberRegistration & {
   updatedAt?: FirestoreDate
   approvedAt?: FirestoreDate
   approvedBy?: string
+}
+
+export type AuditLog = {
+  id: string
+  action: string
+  entityType: string
+  entityId: string
+  entityName?: string
+  actorUid: string
+  actorName?: string
+  actorEmail?: string
+  summary: string
+  before?: Record<string, unknown>
+  after?: Record<string, unknown>
+  changedFields?: string[]
+  createdAt?: FirestoreDate
 }
 
 export type CongregationCategory = 'capital' | 'interior' | 'zona_rural'

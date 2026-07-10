@@ -142,6 +142,7 @@ const registrationSchema = z
     cpf: z.string(),
     rg: z.string(),
     dataNascimento: z.string(),
+    sexo: z.enum(['', 'masculino', 'feminino']),
     tipoPessoa: z.enum(['visitante', 'membro', 'convidado', 'congregado']),
     possuiCargo: z.boolean(),
     cargo: z.string().optional(),
@@ -186,6 +187,10 @@ const registrationSchema = z
       ctx.addIssue({ code: 'custom', path: ['dataNascimento'], message: 'Informe a data de nascimento.' })
     } else if (new Date(data.dataNascimento) > new Date()) {
       ctx.addIssue({ code: 'custom', path: ['dataNascimento'], message: 'A data de nascimento não pode ser futura.' })
+    }
+
+    if (!data.sexo) {
+      ctx.addIssue({ code: 'custom', path: ['sexo'], message: 'Selecione o sexo.' })
     }
 
     if (!data.congregacao) {
@@ -279,6 +284,7 @@ const initialForm: MemberRegistration = {
   cpf: '',
   rg: '',
   dataNascimento: '',
+  sexo: '',
   tipoPessoa: 'visitante',
   possuiCargo: false,
   cargo: undefined,
@@ -390,6 +396,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
       nomeCompleto: current.nomeCompleto || accountName,
       telefone: current.telefone || profile?.telefone || '',
       dataNascimento: current.dataNascimento || profile?.dataNascimento || '',
+      sexo: current.sexo || profile?.sexo || '',
       congregacao: current.congregacao || profile?.congregacao || '',
       tipoPessoa:
         profile?.tipoPessoa === 'visitante' || profile?.tipoPessoa === 'convidado' || profile?.tipoPessoa === 'congregado'
@@ -411,6 +418,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
     profile?.congregacao,
     profile?.convidadoPor,
     profile?.dataNascimento,
+    profile?.sexo,
     profile?.dataAceitacao,
     profile?.cpf,
     profile?.endereco,
@@ -748,6 +756,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
           congregacao: data.congregacao,
           telefone: data.telefone,
           dataNascimento: data.dataNascimento,
+          sexo: data.sexo,
         })
         setLastProtocol(result.id)
       } else {
@@ -758,6 +767,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
           congregacao: data.congregacao,
           telefone: data.telefone,
           dataNascimento: data.dataNascimento,
+          sexo: data.sexo,
           convidadoPor: isConvidado ? data.convidadoPor?.trim() : undefined,
           observacoes: data.observacoes?.trim() || undefined,
         })
@@ -892,6 +902,21 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
               onChange={(event) => updateField('dataNascimento', event.target.value)}
             />
             {fieldError('dataNascimento')}
+          </label>
+
+          <label>
+            Sexo
+            <RequiredHint />
+            <select
+              className={fieldErrorClass('sexo')}
+              value={form.sexo}
+              onChange={(event) => updateField('sexo', event.target.value as MemberRegistration['sexo'])}
+            >
+              <option value="">Selecione</option>
+              <option value="masculino">Masculino</option>
+              <option value="feminino">Feminino</option>
+            </select>
+            {fieldError('sexo')}
           </label>
 
           <label>

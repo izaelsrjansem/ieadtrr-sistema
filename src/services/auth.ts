@@ -7,6 +7,7 @@ import {
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
+  verifyBeforeUpdateEmail,
 } from 'firebase/auth'
 import { doc, setDoc } from 'firebase/firestore'
 import { auth, db, isFirebaseConfigured } from '../lib/firebase'
@@ -50,6 +51,14 @@ export async function signUp(email: string, password: string, nomeCompleto: stri
   }
 
   await setDoc(doc(db, 'users', credential.user.uid), profile)
+}
+
+export async function requestAccessEmailChange(newEmail: string) {
+  if (!auth?.currentUser) {
+    throw new Error(configErrorMessage)
+  }
+
+  await verifyBeforeUpdateEmail(auth.currentUser, newEmail.trim().toLowerCase())
 }
 
 export async function signOutUser() {

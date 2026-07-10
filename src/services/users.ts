@@ -9,6 +9,7 @@ type VisitorProfileData = {
   congregacao: string
   telefone: string
   dataNascimento: string
+  sexo: MemberRegistration['sexo']
   convidadoPor?: string
   observacoes?: string
 }
@@ -20,6 +21,7 @@ type MemberProfileData = {
   congregacao: string
   telefone: string
   dataNascimento: string
+  sexo: MemberRegistration['sexo']
 }
 
 type CongregadoProfileData = MemberRegistration & {
@@ -141,6 +143,33 @@ export async function markMemberRegistrationProfile(uid: string, data: MemberPro
 
   await updateDoc(doc(db, 'users', uid), {
     ...data,
+    email: emailLower,
+    emailLower,
+    updatedAt: serverTimestamp(),
+  })
+}
+
+export async function updateUserRegistrationProfile(
+  uid: string,
+  data: Partial<Omit<UserProfile, 'uid' | 'role' | 'createdAt' | 'email' | 'emailLower'>>,
+): Promise<void> {
+  if (!db) {
+    throw new Error('Firebase não configurado.')
+  }
+
+  await updateDoc(doc(db, 'users', uid), {
+    ...data,
+    updatedAt: serverTimestamp(),
+  })
+}
+
+export async function syncUserAccessEmail(uid: string, email: string): Promise<void> {
+  if (!db) {
+    throw new Error('Firebase não configurado.')
+  }
+
+  const emailLower = email.trim().toLowerCase()
+  await updateDoc(doc(db, 'users', uid), {
     email: emailLower,
     emailLower,
     updatedAt: serverTimestamp(),

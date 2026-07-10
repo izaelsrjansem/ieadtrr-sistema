@@ -49,6 +49,7 @@ import {
   congregations as fallbackCongregations,
   homeAnnouncements,
   leadership,
+  logradouroOptions,
   personTypeOptions,
   publicEvents,
   serviceScale,
@@ -61,7 +62,8 @@ import {
   institutionalInfo,
   publicChurchPrinciples,
 } from './data/institutional'
-import { isFirebaseConfigured, sendPasswordReset, signIn, signOutUser, signUp } from './services/auth'
+import { isFirebaseConfigured, requestAccessEmailChange, sendPasswordReset, signIn, signOutUser, signUp } from './services/auth'
+import { createAuditLog, subscribeAuditLogs, type AuditActor } from './services/audit'
 import {
   createCongregation,
   subscribeCongregations,
@@ -69,16 +71,18 @@ import {
   updateCongregation,
   type CongregationInput,
 } from './services/congregations'
-import { subscribeMembers } from './services/members'
+import { deactivateOfficialMember, subscribeMembers, updateOfficialMember, updateOfficialMemberStatus } from './services/members'
 import { decideMembershipRequest, subscribeMembershipRequests } from './services/membership'
 import { defaultNavigationItems, saveNavigationItems, subscribeNavigationItems } from './services/siteNavigation'
 import {
   getUserProfile,
   promoteCongregadoToMembro,
   promoteVisitorToCongregado,
+  syncUserAccessEmail,
   subscribeUsers,
   updateUserAdminSectionAccess,
   updateMemberChurchRole,
+  updateUserRegistrationProfile,
   updateUserRole,
   updateVisitorCongregacao,
 } from './services/users'
@@ -94,10 +98,12 @@ import type {
   FirestoreDate,
   ChurchRole,
   AdminSectionKey,
+  AuditLog,
   MembershipRequest,
   MembershipRequestStatus,
   NavigationIconKey,
   NavigationItem,
+  MemberRegistration,
   OfficialMember,
   SystemRole,
   UserProfile,
@@ -160,6 +166,12 @@ const adminSections: AdminSectionDefinition[] = [
     title: 'Usuários',
     description: 'Perfis e acesso por seção',
     icon: ShieldCheck,
+  },
+  {
+    key: 'auditoria',
+    title: 'Auditoria',
+    description: 'Quem alterou, quando e o que mudou',
+    icon: ScrollText,
   },
   {
     key: 'site',
@@ -639,7 +651,7 @@ function App() {
             path="/membro"
             element={
               <ProtectedRoute allowedRoles={['membro', 'diretoria', 'admin']}>
-                <MemberDashboard />
+                <EnhancedMemberDashboard />
               </ProtectedRoute>
             }
           />
@@ -1345,6 +1357,605 @@ function MemberDashboard() {
   )
 }
 
+void MemberDashboard
+
+const editableAddressFallback = {
+  tipoLogradouro: '',
+  cep: '',
+  rua: '',
+  numero: '',
+  complemento: '',
+  bairro: '',
+  cidade: 'Boa Vista',
+  estado: 'RR',
+}
+
+type EditableRegistrationRecord = Partial<MemberRegistration> & {
+  id?: string
+  uid?: string
+  userId?: string
+  role?: SystemRole
+  status?: string
+}
+
+function editableRecordToForm(record: EditableRegistrationRecord): MemberRegistration {
+  return {
+    nomeCompleto: record.nomeCompleto ?? '',
+    email: record.email ?? '',
+    emailLower: record.emailLower,
+    telefone: record.telefone ?? '',
+    possuiWhatsapp: Boolean(record.possuiWhatsapp),
+    convidadoPor: record.convidadoPor ?? '',
+    cpf: record.cpf ?? '',
+    cpfDigits: record.cpfDigits,
+    rg: record.rg ?? '',
+    dataNascimento: record.dataNascimento ?? '',
+    sexo: record.sexo ?? '',
+    tipoPessoa: record.tipoPessoa ?? (record.role === 'congregado' ? 'congregado' : 'membro'),
+    possuiCargo: Boolean(record.possuiCargo),
+    cargo: record.cargo,
+    outroCargo: record.outroCargo ?? '',
+    congregacao: record.congregacao ?? '',
+    endereco: { ...editableAddressFallback, ...record.endereco },
+    dataBatismo: record.dataBatismo ?? '',
+    dataAceitacao: record.dataAceitacao ?? '',
+    fotoModo: record.fotoModo ?? 'unica',
+    fotoArquivo: record.fotoArquivo ?? '',
+    fotoVersoArquivo: record.fotoVersoArquivo ?? '',
+    cartaMudancaPaginas: record.cartaMudancaPaginas ?? 'unica',
+    cartaMudancaArquivo: record.cartaMudancaArquivo ?? '',
+    cartaRecomendacaoPaginas: record.cartaRecomendacaoPaginas ?? 'unica',
+    cartaRecomendacaoArquivo: record.cartaRecomendacaoArquivo ?? '',
+    observacoes: record.observacoes ?? '',
+    consentimentoLgpd: true,
+  }
+}
+
+function editablePayloadFromForm(form: MemberRegistration) {
+  const email = form.email.trim().toLowerCase()
+
+  return {
+    nomeCompleto: form.nomeCompleto.trim(),
+    telefone: form.telefone.trim(),
+    possuiWhatsapp: form.possuiWhatsapp,
+    cpf: form.cpf.trim(),
+    cpfDigits: form.cpf.replace(/\D/g, ''),
+    rg: form.rg.trim(),
+    dataNascimento: form.dataNascimento,
+    sexo: form.sexo || undefined,
+    tipoPessoa: form.tipoPessoa,
+    congregacao: form.congregacao,
+    endereco: form.endereco,
+    dataBatismo: form.tipoPessoa === 'membro' ? form.dataBatismo : '',
+    dataAceitacao: form.dataAceitacao,
+    fotoModo: form.fotoModo,
+    fotoArquivo: form.fotoArquivo?.trim() || '',
+    fotoVersoArquivo: form.fotoModo === 'frente_verso' ? form.fotoVersoArquivo?.trim() || '' : '',
+    cartaMudancaPaginas: form.cartaMudancaPaginas,
+    cartaMudancaArquivo: form.cartaMudancaArquivo?.trim() || '',
+    cartaRecomendacaoPaginas: form.cartaRecomendacaoPaginas,
+    cartaRecomendacaoArquivo: form.cartaRecomendacaoArquivo?.trim() || '',
+    observacoes: form.observacoes?.trim() || '',
+    email,
+    emailLower: email,
+  }
+}
+
+type MemberEditorRequiredField =
+  | 'nomeCompleto'
+  | 'email'
+  | 'cpf'
+  | 'telefone'
+  | 'dataNascimento'
+  | 'sexo'
+  | 'congregacao'
+  | 'endereco.tipoLogradouro'
+  | 'endereco.rua'
+  | 'endereco.numero'
+  | 'endereco.bairro'
+  | 'endereco.cidade'
+  | 'endereco.estado'
+  | 'dataAceitacao'
+  | 'dataBatismo'
+
+function cpfDigits(value: string): string {
+  return value.replace(/\D/g, '')
+}
+
+function emailLooksValid(value: string): boolean {
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value.trim())
+}
+
+function memberEditorMissingRequiredFields(form: MemberRegistration): Set<MemberEditorRequiredField> {
+  const missing = new Set<MemberEditorRequiredField>()
+  const requiresFullRegistration = form.tipoPessoa === 'membro' || form.tipoPessoa === 'congregado'
+
+  if (form.nomeCompleto.trim().split(/\s+/).filter(Boolean).length < 2) missing.add('nomeCompleto')
+  if (!emailLooksValid(form.email)) missing.add('email')
+  if (cpfDigits(form.cpf).length !== 11) missing.add('cpf')
+  if (cpfDigits(form.telefone).length < 10) missing.add('telefone')
+  if (!form.dataNascimento) missing.add('dataNascimento')
+  if (!form.sexo) missing.add('sexo')
+  if (!form.congregacao) missing.add('congregacao')
+
+  if (requiresFullRegistration) {
+    if (!form.endereco.tipoLogradouro) missing.add('endereco.tipoLogradouro')
+    if (form.endereco.rua.trim().length < 3) missing.add('endereco.rua')
+    if (!form.endereco.numero.trim()) missing.add('endereco.numero')
+    if (form.endereco.bairro.trim().length < 2) missing.add('endereco.bairro')
+    if (form.endereco.cidade.trim().length < 2) missing.add('endereco.cidade')
+    if (form.endereco.estado.trim().length < 2) missing.add('endereco.estado')
+  }
+
+  if (form.tipoPessoa === 'congregado' && !form.dataAceitacao) {
+    missing.add('dataAceitacao')
+  }
+
+  return missing
+}
+
+function AccessEmailChangeTool({ currentEmail }: { currentEmail: string }) {
+  const [newEmail, setNewEmail] = useState('')
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+  const [message, setMessage] = useState('')
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const normalizedEmail = newEmail.trim().toLowerCase()
+
+    if (!normalizedEmail || normalizedEmail === currentEmail.trim().toLowerCase()) {
+      setStatus('error')
+      setMessage('Informe um e-mail novo, diferente do atual.')
+      return
+    }
+
+    setStatus('sending')
+    setMessage('')
+
+    try {
+      await requestAccessEmailChange(normalizedEmail)
+      setStatus('sent')
+      setMessage('Enviamos um link de confirmação para o novo e-mail. A troca só acontece depois da confirmação.')
+      setNewEmail('')
+    } catch (error) {
+      const code = (error as { code?: string }).code
+      setStatus('error')
+      setMessage(
+        code === 'auth/requires-recent-login'
+          ? 'Por segurança, saia e entre novamente antes de solicitar a troca de e-mail.'
+          : code === 'auth/email-already-in-use'
+            ? 'Este e-mail já está cadastrado em outro acesso. Use outro e-mail ou recupere o acesso existente.'
+            : 'Não foi possível iniciar a troca de e-mail agora.',
+      )
+    }
+  }
+
+  return (
+    <form className="email-change-tool" onSubmit={handleSubmit}>
+      <div>
+        <strong>Trocar e-mail de acesso</strong>
+        <p>O e-mail do login não é alterado no cadastro. Para segurança, o novo endereço precisa ser confirmado.</p>
+      </div>
+      <div className="email-change-row">
+        <input
+          onChange={(event) => {
+            setNewEmail(event.target.value)
+            setStatus('idle')
+          }}
+          placeholder="novoemail@exemplo.com"
+          type="email"
+          value={newEmail}
+        />
+        <button className="secondary-admin-action" disabled={status === 'sending'} type="submit">
+          <Mail aria-hidden="true" />
+          {status === 'sending' ? 'Enviando...' : 'Enviar confirmação'}
+        </button>
+      </div>
+      {message ? <div className={`form-alert ${status === 'sent' ? 'success' : 'error'}`}>{message}</div> : null}
+    </form>
+  )
+}
+
+function MemberCadastroEditor({
+  record,
+  mode,
+  onSave,
+  onCancel,
+  highlightMissingRequired = false,
+  extraRequiredFields = [],
+}: {
+  record: EditableRegistrationRecord
+  mode: 'admin' | 'self'
+  onSave: (data: ReturnType<typeof editablePayloadFromForm>) => Promise<void>
+  onCancel?: () => void
+  highlightMissingRequired?: boolean
+  extraRequiredFields?: MemberEditorRequiredField[]
+}) {
+  const [form, setForm] = useState<MemberRegistration>(() => editableRecordToForm(record))
+  const [congregationList, setCongregationList] = useState<Congregation[]>(fallbackCongregations)
+  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [submitMessage, setSubmitMessage] = useState('')
+
+  useEffect(() => {
+    setForm(editableRecordToForm(record))
+    setSubmitMessage('')
+  }, [record])
+  useEffect(() => subscribeCongregations(setCongregationList), [])
+
+  const missingRequiredFields = memberEditorMissingRequiredFields(form)
+  if (extraRequiredFields.includes('dataBatismo') && !form.dataBatismo) {
+    missingRequiredFields.add('dataBatismo')
+  }
+
+  function updateField<K extends keyof MemberRegistration>(field: K, value: MemberRegistration[K]) {
+    setForm((current) => ({ ...current, [field]: value }))
+    setStatus('idle')
+    setSubmitMessage('')
+  }
+
+  function updateAddress(field: keyof MemberRegistration['endereco'], value: string) {
+    setForm((current) => ({
+      ...current,
+      endereco: { ...current.endereco, [field]: value },
+    }))
+    setStatus('idle')
+    setSubmitMessage('')
+  }
+
+  function fieldError(field: MemberEditorRequiredField) {
+    return highlightMissingRequired && missingRequiredFields.has(field) ? 'field-control-error' : undefined
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    if (highlightMissingRequired && missingRequiredFields.size > 0) {
+      setStatus('error')
+      setSubmitMessage('Preencha os campos obrigatórios destacados para resolver esta pendência.')
+      return
+    }
+
+    setStatus('saving')
+    setSubmitMessage('')
+
+    try {
+      await onSave(editablePayloadFromForm(form))
+      setStatus('saved')
+    } catch {
+      setStatus('error')
+    }
+  }
+
+  const activeCongregations = congregationList.filter((congregation) => congregation.ativa !== false)
+
+  return (
+    <form className="registration-form member-edit-form" onSubmit={handleSubmit}>
+      <div className="form-band">
+        <div>
+          <p className="eyebrow">{mode === 'admin' ? 'Alteração administrativa' : 'Meu cadastro'}</p>
+          <h2>{mode === 'admin' ? 'Alterar cadastro completo' : 'Conferir e alterar meus dados'}</h2>
+        </div>
+        <FileText aria-hidden="true" />
+      </div>
+
+      {highlightMissingRequired && missingRequiredFields.size > 0 ? (
+        <div className="form-alert error">
+          Preencha os campos obrigatórios destacados para resolver esta pendência. Campos opcionais não bloqueiam a progressão.
+        </div>
+      ) : null}
+
+      <fieldset>
+        <legend>Identificação</legend>
+        <div className="form-grid">
+          <label className="wide-field">
+            Nome completo
+            <RequiredHint />
+            <input
+              className={fieldError('nomeCompleto')}
+              value={form.nomeCompleto}
+              onChange={(event) => updateField('nomeCompleto', event.target.value)}
+              placeholder="Nome e sobrenome"
+            />
+            <small className="field-hint">Informe o nome civil completo da pessoa.</small>
+          </label>
+          <label>
+            E-mail de acesso
+            <RequiredHint />
+            <input className={fieldError('email')} readOnly type="email" value={form.email} />
+            <small className="field-hint">Este e-mail não pode ser alterado aqui.</small>
+          </label>
+          <label>
+            Tipo
+            <select
+              disabled={mode === 'self'}
+              value={form.tipoPessoa}
+              onChange={(event) => updateField('tipoPessoa', event.target.value as MemberRegistration['tipoPessoa'])}
+            >
+              <option value="visitante">Visitante</option>
+              <option value="convidado">Convidado</option>
+              <option value="membro">Membro</option>
+              <option value="congregado">Congregado</option>
+            </select>
+          </label>
+          <label>
+            CPF
+            <RequiredHint />
+            <input
+              className={fieldError('cpf')}
+              value={form.cpf}
+              onChange={(event) => updateField('cpf', event.target.value)}
+              placeholder="000.000.000-00"
+            />
+            <small className="field-hint">Documento principal do cadastro.</small>
+          </label>
+          <label>
+            RG
+            <span className="optional-tag">(opcional)</span>
+            <input value={form.rg} onChange={(event) => updateField('rg', event.target.value)} />
+          </label>
+          <label>
+            Data de nascimento
+            <RequiredHint />
+            <input
+              className={fieldError('dataNascimento')}
+              type="date"
+              value={form.dataNascimento}
+              onChange={(event) => updateField('dataNascimento', event.target.value)}
+            />
+            <small className="field-hint">Usada para validar idade e etapas do cadastro.</small>
+          </label>
+          <label>
+            Sexo
+            <RequiredHint />
+            <select
+              className={fieldError('sexo')}
+              value={form.sexo}
+              onChange={(event) => updateField('sexo', event.target.value as MemberRegistration['sexo'])}
+            >
+              <option value="">Selecione</option>
+              <option value="masculino">Masculino</option>
+              <option value="feminino">Feminino</option>
+            </select>
+          </label>
+          <label>
+            Congregação
+            <RequiredHint />
+            <select
+              className={fieldError('congregacao')}
+              value={form.congregacao}
+              onChange={(event) => updateField('congregacao', event.target.value)}
+            >
+              <option value="">Selecione</option>
+              {activeCongregations.map((congregation) => (
+                <option key={congregation.id} value={congregation.id}>
+                  {congregation.nome}
+                </option>
+              ))}
+            </select>
+            <small className="field-hint">Congregação que a pessoa frequenta ou está vinculada.</small>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Contato e endereço</legend>
+        <div className="form-grid">
+          <label>
+            Telefone
+            <RequiredHint />
+            <input
+              className={fieldError('telefone')}
+              value={form.telefone}
+              onChange={(event) => updateField('telefone', event.target.value)}
+              placeholder="(00) 00000-0000"
+            />
+            <small className="field-hint">Informe um telefone com DDD.</small>
+          </label>
+          <label className="checkbox-line whatsapp-option">
+            <input
+              checked={form.possuiWhatsapp}
+              onChange={(event) => updateField('possuiWhatsapp', event.target.checked)}
+              type="checkbox"
+            />
+            <MessageCircle aria-hidden="true" />
+            Este número tem WhatsApp
+          </label>
+          <label>
+            CEP
+            <span className="optional-tag">(opcional)</span>
+            <input value={form.endereco.cep} onChange={(event) => updateAddress('cep', event.target.value)} />
+          </label>
+          <label>
+            Tipo de logradouro
+            <RequiredHint />
+            <select
+              className={fieldError('endereco.tipoLogradouro')}
+              value={form.endereco.tipoLogradouro}
+              onChange={(event) => updateAddress('tipoLogradouro', event.target.value)}
+            >
+              <option value="">Selecione</option>
+              {logradouroOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="wide-field">
+            Nome do logradouro
+            <RequiredHint />
+            <input
+              className={fieldError('endereco.rua')}
+              value={form.endereco.rua}
+              onChange={(event) => updateAddress('rua', event.target.value)}
+              placeholder="Ex.: Avenida dos Imigrantes"
+            />
+          </label>
+          <label>
+            Número
+            <RequiredHint />
+            <input
+              className={fieldError('endereco.numero')}
+              value={form.endereco.numero}
+              onChange={(event) => updateAddress('numero', event.target.value)}
+            />
+          </label>
+          <label>
+            Complemento
+            <span className="optional-tag">(opcional)</span>
+            <input value={form.endereco.complemento} onChange={(event) => updateAddress('complemento', event.target.value)} />
+          </label>
+          <label>
+            Bairro
+            <RequiredHint />
+            <input
+              className={fieldError('endereco.bairro')}
+              value={form.endereco.bairro}
+              onChange={(event) => updateAddress('bairro', event.target.value)}
+            />
+          </label>
+          <label>
+            Cidade
+            <RequiredHint />
+            <input
+              className={fieldError('endereco.cidade')}
+              value={form.endereco.cidade}
+              onChange={(event) => updateAddress('cidade', event.target.value)}
+            />
+          </label>
+          <label>
+            Estado
+            <RequiredHint />
+            <input
+              className={fieldError('endereco.estado')}
+              value={form.endereco.estado}
+              onChange={(event) => updateAddress('estado', event.target.value)}
+            />
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Vida cristã e documentos</legend>
+        <div className="form-grid">
+          {form.tipoPessoa === 'membro' ? (
+            <label>
+              Data de batismo
+              {extraRequiredFields.includes('dataBatismo') ? <RequiredHint /> : <span className="optional-tag">(opcional)</span>}
+              <input
+                className={fieldError('dataBatismo')}
+                type="date"
+                value={form.dataBatismo}
+                onChange={(event) => updateField('dataBatismo', event.target.value)}
+              />
+              <small className="field-hint">
+                Obrigatória quando a pendência for progressão ministerial ou atribuição de cargo.
+              </small>
+            </label>
+          ) : null}
+          <label>
+            Data de aceitação
+            {form.tipoPessoa === 'congregado' ? <RequiredHint /> : <span className="optional-tag">(opcional)</span>}
+            <input
+              className={fieldError('dataAceitacao')}
+              type="date"
+              value={form.dataAceitacao}
+              onChange={(event) => updateField('dataAceitacao', event.target.value)}
+            />
+          </label>
+          <label>
+            Foto
+            <span className="optional-tag">(opcional)</span>
+            <input value={form.fotoArquivo} onChange={(event) => updateField('fotoArquivo', event.target.value)} />
+          </label>
+          <label>
+            Foto verso
+            <span className="optional-tag">(opcional)</span>
+            <input value={form.fotoVersoArquivo} onChange={(event) => updateField('fotoVersoArquivo', event.target.value)} />
+          </label>
+          <label>
+            Carta de mudança
+            <span className="optional-tag">(opcional)</span>
+            <input value={form.cartaMudancaArquivo} onChange={(event) => updateField('cartaMudancaArquivo', event.target.value)} />
+          </label>
+          <label>
+            Carta de recomendação
+            <span className="optional-tag">(opcional)</span>
+            <input value={form.cartaRecomendacaoArquivo} onChange={(event) => updateField('cartaRecomendacaoArquivo', event.target.value)} />
+          </label>
+          <label className="wide-field">
+            Observações
+            <span className="optional-tag">(opcional)</span>
+            <textarea value={form.observacoes} onChange={(event) => updateField('observacoes', event.target.value)} rows={4} />
+          </label>
+        </div>
+      </fieldset>
+
+      {mode === 'self' ? <AccessEmailChangeTool currentEmail={form.email} /> : null}
+
+      <div className="member-edit-actions">
+        {onCancel ? (
+          <button className="secondary-admin-action" type="button" onClick={onCancel}>
+            <X aria-hidden="true" />
+            Fechar
+          </button>
+        ) : null}
+        <button className="primary-action" disabled={status === 'saving'} type="submit">
+          <Check aria-hidden="true" />
+          {status === 'saving' ? 'Salvando...' : 'Salvar alterações'}
+        </button>
+      </div>
+
+      {status === 'saved' ? <div className="form-alert success">Cadastro atualizado.</div> : null}
+      {status === 'error' ? (
+        <div className="form-alert error">{submitMessage || 'Não foi possível salvar as alterações.'}</div>
+      ) : null}
+    </form>
+  )
+}
+
+function EnhancedMemberDashboard() {
+  const { firebaseUser, profile } = useAuth()
+
+  useEffect(() => {
+    if (!firebaseUser?.email || !profile?.email || firebaseUser.email === profile.email) {
+      return
+    }
+
+    void syncUserAccessEmail(firebaseUser.uid, firebaseUser.email)
+  }, [firebaseUser, profile?.email])
+
+  if (!profile || !firebaseUser) {
+    return null
+  }
+
+  return (
+    <section className="content-section dashboard-page">
+      <DashboardHeader title="Painel do membro" subtitle="Avisos, agenda, campanhas e dados cadastrais" />
+      <div className="card-grid">
+        {[
+          ['Avisos', '2 comunicados ativos', <Megaphone key="avisos" />],
+          ['Agenda', 'Próximos cultos e campanhas', <CalendarDays key="agenda" />],
+          ['Cadastro', 'Dados pessoais e documentos', <FileText key="cadastro" />],
+          ['Fundadores', 'Relação nominal histórica', <UsersRound key="fundadores" />],
+        ].map(([cardTitle, cardText, icon]) => (
+          <article className="info-card" key={String(cardTitle)}>
+            {icon}
+            <h2>{cardTitle}</h2>
+            <p>{cardText}</p>
+          </article>
+        ))}
+      </div>
+
+      <MemberCadastroEditor
+        mode="self"
+        record={profile}
+        onSave={(data) => updateUserRegistrationProfile(firebaseUser.uid, data)}
+      />
+    </section>
+  )
+}
+
 function VisitorPanel() {
   const { firebaseUser, profile } = useAuth()
   const [congregationList, setCongregationList] = useState<Congregation[]>(fallbackCongregations)
@@ -1624,12 +2235,7 @@ function AdminDashboard({ navigationItems }: { navigationItems: NavigationItem[]
           </>
         )
       case 'membros':
-        return (
-          <>
-            <MemberDirectory />
-            <ProfileProgressionManager />
-          </>
-        )
+        return <MembersAdminSection />
       case 'presencas':
         return (
           <>
@@ -1641,6 +2247,8 @@ function AdminDashboard({ navigationItems }: { navigationItems: NavigationItem[]
         return <CongregationManager />
       case 'usuarios':
         return <UserAccessManager />
+      case 'auditoria':
+        return <AuditLogPanel />
       case 'site':
         return (
           <>
@@ -2670,15 +3278,68 @@ function MembershipApprovals() {
           })}
         </div>
       )}
+
     </section>
   )
 }
 
+function auditActorFor(firebaseUser: { uid: string; email?: string | null } | null, profile: UserProfile | null): AuditActor | null {
+  if (!firebaseUser) {
+    return null
+  }
+
+  return {
+    uid: firebaseUser.uid,
+    nomeCompleto: profile?.nomeCompleto,
+    email: firebaseUser.email ?? profile?.email,
+  }
+}
+
+function auditChangedFields(before: Record<string, unknown>, after: Record<string, unknown>) {
+  return Object.keys(after).filter((field) => JSON.stringify(before[field] ?? null) !== JSON.stringify(after[field] ?? null))
+}
+
+function MembersAdminSection() {
+  const [activeTab, setActiveTab] = useState<'cadastro' | 'progressao'>('cadastro')
+
+  return (
+    <div className="members-admin-section">
+      <div className="request-filters member-subtabs" role="tablist" aria-label="Seções de membros">
+        <button
+          aria-selected={activeTab === 'cadastro'}
+          className={activeTab === 'cadastro' ? 'active' : undefined}
+          onClick={() => setActiveTab('cadastro')}
+          role="tab"
+          type="button"
+        >
+          Cadastro de membros
+        </button>
+        <button
+          aria-selected={activeTab === 'progressao'}
+          className={activeTab === 'progressao' ? 'active' : undefined}
+          onClick={() => setActiveTab('progressao')}
+          role="tab"
+          type="button"
+        >
+          Progressão espiritual
+        </button>
+      </div>
+
+      {activeTab === 'cadastro' ? <MemberDirectory /> : <ProfileProgressionManager />}
+    </div>
+  )
+}
+
 function MemberDirectory() {
+  const { firebaseUser, profile } = useAuth()
   const [members, setMembers] = useState<OfficialMember[]>([])
   const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<OfficialMember['status'] | 'todos'>('ativo')
+  const [editingMember, setEditingMember] = useState<OfficialMember | null>(null)
+  const [deletingMemberId, setDeletingMemberId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
 
   useEffect(() => {
     return subscribeMembers(
@@ -2694,8 +3355,11 @@ function MemberDirectory() {
   }, [])
 
   const normalizedSearch = search.trim().toLowerCase()
-  const activeMembers = members
-    .filter((member) => member.status !== 'inativo')
+  const visibleMembers = members
+    .filter((member) => {
+      const status = member.status ?? 'ativo'
+      return statusFilter === 'todos' ? true : status === statusFilter
+    })
     .filter((member) => {
       if (!normalizedSearch) {
         return true
@@ -2706,6 +3370,88 @@ function MemberDirectory() {
       )
     })
     .sort((a, b) => a.nomeCompleto.localeCompare(b.nomeCompleto, 'pt-BR'))
+
+  async function handleStatusChange(member: OfficialMember, nextStatus: OfficialMember['status']) {
+    const currentStatus = member.status ?? 'ativo'
+
+    if (currentStatus === nextStatus) {
+      return
+    }
+
+    setDeletingMemberId(member.id)
+    setError('')
+    setNotice('')
+
+    try {
+      await updateOfficialMemberStatus(member.id, nextStatus, firebaseUser?.uid)
+      const actor = auditActorFor(firebaseUser, profile)
+      if (actor) {
+        await createAuditLog({
+          action: 'member_status_changed',
+          entityType: 'members',
+          entityId: member.id,
+          entityName: member.nomeCompleto,
+          actor,
+          summary: `Status do membro alterado de ${currentStatus} para ${nextStatus}.`,
+          before: { status: currentStatus },
+          after: { status: nextStatus },
+          changedFields: ['status'],
+        })
+      }
+      setNotice(`Status alterado para ${nextStatus}.`)
+    } catch {
+      setError('Não foi possível alterar o status deste cadastro.')
+    } finally {
+      setDeletingMemberId(null)
+    }
+  }
+
+  async function handleDeleteMember(member: OfficialMember) {
+    const confirmed = window.confirm(
+      `Excluir o cadastro de ${member.nomeCompleto}? Ele sairá da lista de membros ativos.`,
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    setDeletingMemberId(member.id)
+    setError('')
+    setNotice('')
+
+    try {
+      await deactivateOfficialMember(member.id, firebaseUser?.uid)
+      const actor = auditActorFor(firebaseUser, profile)
+      if (actor) {
+        await createAuditLog({
+          action: 'member_deactivated',
+          entityType: 'members',
+          entityId: member.id,
+          entityName: member.nomeCompleto,
+          actor,
+          summary: 'Cadastro de membro excluído da lista ativa por inativação.',
+          before: { status: member.status ?? 'ativo' },
+          after: { status: 'inativo' },
+          changedFields: ['status'],
+        })
+      }
+      if (member.userId) {
+        try {
+          await updateUserRole(member.userId, 'pendente')
+        } catch {
+          // Section-limited admins may not have permission to change user roles.
+        }
+      }
+      if (editingMember?.id === member.id) {
+        setEditingMember(null)
+      }
+      setNotice('Cadastro excluído da lista de membros ativos.')
+    } catch {
+      setError('Não foi possível excluir este cadastro.')
+    } finally {
+      setDeletingMemberId(null)
+    }
+  }
 
   return (
     <section className="admin-panel-block" id="membros-oficiais">
@@ -2731,17 +3477,105 @@ function MemberDirectory() {
         />
       </label>
 
+      <div className="request-filters">
+        {[
+          { value: 'ativo', label: 'Ativos', count: members.filter((member) => (member.status ?? 'ativo') === 'ativo').length },
+          { value: 'inativo', label: 'Inativos', count: members.filter((member) => member.status === 'inativo').length },
+          { value: 'todos', label: 'Todos', count: members.length },
+        ].map((option) => (
+          <button
+            className={statusFilter === option.value ? 'active' : undefined}
+            key={option.value}
+            onClick={() => setStatusFilter(option.value as OfficialMember['status'] | 'todos')}
+            type="button"
+          >
+            {option.label}
+            <span>{option.count}</span>
+          </button>
+        ))}
+      </div>
+
       {error ? <div className="form-alert error">{error}</div> : null}
+      {notice ? <div className="form-alert success">{notice}</div> : null}
+
+      {!loading && visibleMembers.length > 0 ? (
+        <div className="member-table-wrap">
+          <table className="member-table">
+            <colgroup>
+              <col className="member-col-number" />
+              <col className="member-col-name" />
+              <col className="member-col-congregation" />
+              <col className="member-col-phone" />
+              <col className="member-col-baptism" />
+              <col className="member-col-status" />
+              <col className="member-col-actions" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Nº</th>
+                <th>Nome</th>
+                <th>Congregação</th>
+                <th>Telefone</th>
+                <th>Batismo</th>
+                <th>Status</th>
+                <th>Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleMembers.map((member, index) => (
+                <tr key={member.id}>
+                  <td>{index + 1}</td>
+                  <td>
+                    <strong>{member.nomeCompleto}</strong>
+                    <span>{member.email || 'Sem e-mail'}</span>
+                  </td>
+                  <td>{member.congregacao || 'Congregação não informada'}</td>
+                  <td>{member.telefone || 'Sem telefone'}</td>
+                  <td>{formatDateKey(member.dataBatismo)}</td>
+                  <td>
+                    <select
+                      className="member-status-select"
+                      disabled={deletingMemberId === member.id}
+                      value={member.status ?? 'ativo'}
+                      onChange={(event) => handleStatusChange(member, event.target.value as OfficialMember['status'])}
+                    >
+                      <option value="ativo">Ativo</option>
+                      <option value="inativo">Inativo</option>
+                    </select>
+                  </td>
+                  <td>
+                    <div className="member-table-actions">
+                      <button
+                        className="reject-btn"
+                        disabled={deletingMemberId === member.id}
+                        type="button"
+                        onClick={() => handleDeleteMember(member)}
+                      >
+                        <Trash2 aria-hidden="true" />
+                        {deletingMemberId === member.id ? 'Excluindo...' : 'Excluir cadastro'}
+                      </button>
+                      <button className="secondary-admin-action" type="button" onClick={() => setEditingMember(member)}>
+                        <Pencil aria-hidden="true" />
+                        Alterar cadastro
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
 
       {loading ? (
         <p className="source-note">Carregando membros...</p>
-      ) : activeMembers.length === 0 ? (
+      ) : visibleMembers.length === 0 ? (
         <p className="source-note">
           {normalizedSearch ? 'Nenhum membro encontrado nesta busca.' : 'Nenhum membro oficial cadastrado ainda.'}
         </p>
       ) : (
         <div className="request-list">
-          {activeMembers.map((member) => (
+          {visibleMembers.map((member) => (
             <article className="request-card" key={member.id}>
               <div className="request-main">
                 <div className="request-head">
@@ -2762,23 +3596,191 @@ function MemberDirectory() {
           ))}
         </div>
       )}
+
+      {editingMember ? (
+        <div className="member-edit-panel">
+          <MemberCadastroEditor
+            mode="admin"
+            record={editingMember}
+            onCancel={() => setEditingMember(null)}
+            onSave={async (data) => {
+              const before = Object.fromEntries(
+                Object.keys(data).map((field) => [field, (editingMember as unknown as Record<string, unknown>)[field]]),
+              )
+              const after = data as Record<string, unknown>
+              const changedFields = auditChangedFields(before, after)
+              await updateOfficialMember(editingMember.id, data)
+              if (editingMember.userId) {
+                try {
+                  await updateUserRegistrationProfile(editingMember.userId, data)
+                } catch {
+                  // Section-limited admins may update members without permission to edit users.
+                }
+              }
+              const actor = auditActorFor(firebaseUser, profile)
+              if (actor && changedFields.length > 0) {
+                await createAuditLog({
+                  action: 'member_updated',
+                  entityType: 'members',
+                  entityId: editingMember.id,
+                  entityName: editingMember.nomeCompleto,
+                  actor,
+                  summary: `Cadastro de membro atualizado. Campos alterados: ${changedFields.join(', ')}.`,
+                  before,
+                  after,
+                  changedFields,
+                })
+              }
+            }}
+          />
+        </div>
+      ) : null}
     </section>
   )
 }
 
-function hasCongregadoRequiredData(user: UserProfile): boolean {
-  return Boolean(
-    user.cpf &&
-      user.rg &&
-      user.telefone &&
-      user.dataNascimento &&
-      user.dataAceitacao &&
-      user.endereco?.rua &&
-      user.endereco?.numero &&
-      user.endereco?.bairro &&
-      user.endereco?.cidade &&
-      user.endereco?.estado,
+function AuditLogPanel() {
+  const [logs, setLogs] = useState<AuditLog[]>([])
+  const [search, setSearch] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    return subscribeAuditLogs(
+      (items) => {
+        setLogs(items)
+        setLoading(false)
+      },
+      () => {
+        setError('Não foi possível carregar a auditoria do sistema.')
+        setLoading(false)
+      },
+    )
+  }, [])
+
+  const normalizedSearch = search.trim().toLowerCase()
+  const visibleLogs = logs.filter((log) => {
+    if (!normalizedSearch) {
+      return true
+    }
+
+    return [
+      log.summary,
+      log.actorName,
+      log.actorEmail,
+      log.action,
+      log.entityType,
+      log.entityName,
+      log.entityId,
+      ...(log.changedFields ?? []),
+    ].some((value) => value?.toLowerCase().includes(normalizedSearch))
+  })
+
+  return (
+    <section className="admin-panel-block">
+      <div className="admin-block-heading">
+        <div className="section-heading">
+          <p className="eyebrow">Auditoria</p>
+          <h2>Auditoria do sistema</h2>
+          <p>Registro das principais alterações administrativas, com usuário, data, entidade e campos alterados.</p>
+        </div>
+        <span className="directory-total">
+          <ScrollText aria-hidden="true" />
+          {logs.length} registros
+        </span>
+      </div>
+
+      <label className="directory-search">
+        <span>Buscar na auditoria</span>
+        <input
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Usuário, ação, entidade ou campo alterado"
+          type="search"
+          value={search}
+        />
+      </label>
+
+      {error ? <div className="form-alert error">{error}</div> : null}
+
+      {loading ? (
+        <p className="source-note">Carregando auditoria...</p>
+      ) : visibleLogs.length === 0 ? (
+        <p className="source-note">Nenhum registro de auditoria encontrado.</p>
+      ) : (
+        <div className="audit-log-list">
+          {visibleLogs.map((log) => (
+            <article className="audit-log-card" key={log.id}>
+              <div className="audit-log-head">
+                <div>
+                  <strong>{log.summary}</strong>
+                  <span>{formatFirestoreDate(log.createdAt)}</span>
+                </div>
+                <span className="status-badge status-aprovado">{log.action}</span>
+              </div>
+              <div className="audit-log-grid">
+                <span><strong>Usuário:</strong> {log.actorName || log.actorEmail || log.actorUid}</span>
+                <span><strong>E-mail:</strong> {log.actorEmail || 'Não informado'}</span>
+                <span><strong>Entidade:</strong> {log.entityType}</span>
+                <span><strong>ID:</strong> {log.entityId}</span>
+                <span><strong>Nome:</strong> {log.entityName || 'Não informado'}</span>
+                <span><strong>Campos:</strong> {log.changedFields?.join(', ') || 'Não informado'}</span>
+              </div>
+              <details className="audit-log-details">
+                <summary>Ver antes e depois</summary>
+                <div>
+                  <pre>{JSON.stringify(log.before ?? {}, null, 2)}</pre>
+                  <pre>{JSON.stringify(log.after ?? {}, null, 2)}</pre>
+                </div>
+              </details>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   )
+}
+
+function missingCongregadoToMemberFields(user: UserProfile): string[] {
+  const required: Array<[boolean, string]> = [
+    [Boolean(user.nomeCompleto), 'nome completo'],
+    [Boolean(user.email), 'e-mail'],
+    [Boolean(user.cpf), 'CPF'],
+    [Boolean(user.telefone), 'telefone'],
+    [Boolean(user.dataNascimento), 'data de nascimento'],
+    [Boolean(user.sexo), 'sexo'],
+    [Boolean(user.congregacao), 'congregação'],
+    [Boolean(user.dataAceitacao), 'data de aceitação'],
+    [Boolean(user.endereco?.tipoLogradouro), 'tipo de logradouro'],
+    [Boolean(user.endereco?.rua), 'nome do logradouro'],
+    [Boolean(user.endereco?.numero), 'número do endereço'],
+    [Boolean(user.endereco?.bairro), 'bairro'],
+    [Boolean(user.endereco?.cidade), 'cidade'],
+    [Boolean(user.endereco?.estado), 'estado'],
+  ]
+
+  return required.filter(([ok]) => !ok).map(([, label]) => label)
+}
+
+function missingCongregadoProfileFields(user: UserProfile): string[] {
+  return missingCongregadoToMemberFields(user)
+}
+
+function missingMemberRoleFields(user: UserProfile, selectedCargo: ChurchRole | '', currentOtherCargo: string): string[] {
+  const missing: string[] = []
+
+  if (user.role !== 'membro') {
+    missing.push('perfil precisa estar como membro')
+  }
+
+  if (!user.dataBatismo) {
+    missing.push('data de batismo')
+  }
+
+  if (selectedCargo === 'outro' && !currentOtherCargo.trim()) {
+    missing.push('descrição da outra função')
+  }
+
+  return missing
 }
 
 function ProfileProgressionManager() {
@@ -2786,6 +3788,11 @@ function ProfileProgressionManager() {
   const [loading, setLoading] = useState(true)
   const [busyUid, setBusyUid] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [editingPendingUser, setEditingPendingUser] = useState<UserProfile | null>(null)
+  const pendingEditorRef = useRef<HTMLDivElement | null>(null)
+  const baptismInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+  const otherCargoInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const [baptismDates, setBaptismDates] = useState<Record<string, string>>({})
   const [cargoByUid, setCargoByUid] = useState<Record<string, ChurchRole | ''>>({})
   const [otherCargoByUid, setOtherCargoByUid] = useState<Record<string, string>>({})
@@ -2805,6 +3812,12 @@ function ProfileProgressionManager() {
     return unsubscribe
   }, [])
 
+  useEffect(() => {
+    if (editingPendingUser) {
+      pendingEditorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [editingPendingUser])
+
   const visible = users
     .filter((user) => ['visitante', 'congregado', 'membro'].includes(user.role))
     .sort((a, b) => a.nomeCompleto.localeCompare(b.nomeCompleto, 'pt-BR'))
@@ -2812,6 +3825,7 @@ function ProfileProgressionManager() {
   async function runAction(uid: string, action: () => Promise<void>) {
     setBusyUid(uid)
     setError('')
+    setNotice('')
 
     try {
       await action()
@@ -2820,6 +3834,26 @@ function ProfileProgressionManager() {
     } finally {
       setBusyUid(null)
     }
+  }
+
+  function openPendingEditor(user: UserProfile) {
+    setError('')
+    setNotice('')
+    setEditingPendingUser(user)
+    window.setTimeout(() => {
+      pendingEditorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 80)
+  }
+
+  function focusPendingInput(input: HTMLInputElement | null | undefined) {
+    if (!input) {
+      return
+    }
+
+    setError('')
+    setNotice('')
+    input.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    window.setTimeout(() => input.focus(), 120)
   }
 
   return (
@@ -2831,6 +3865,7 @@ function ProfileProgressionManager() {
       </div>
 
       {error ? <div className="form-alert error">{error}</div> : null}
+      {notice ? <div className="form-alert success">{notice}</div> : null}
 
       {loading ? (
         <p className="source-note">Carregando perfis...</p>
@@ -2839,9 +3874,18 @@ function ProfileProgressionManager() {
       ) : (
         <div className="progression-list">
           {visible.map((user) => {
-            const isCongregadoComplete = hasCongregadoRequiredData(user)
             const selectedCargo = cargoByUid[user.uid] ?? user.cargo ?? ''
             const currentOtherCargo = otherCargoByUid[user.uid] ?? user.outroCargo ?? ''
+            const congregadoMissingFields = missingCongregadoToMemberFields(user)
+            const congregadoProfileMissingFields = missingCongregadoProfileFields(user)
+            const roleMissingFields = missingMemberRoleFields(user, selectedCargo, currentOtherCargo)
+            const isCongregadoComplete = congregadoMissingFields.length === 0
+            const memberPromotionMissing = [
+              ...congregadoMissingFields,
+              ...(!baptismDates[user.uid] ? ['data de batismo para promoção'] : []),
+            ]
+            const shouldEditCongregadoProfile = congregadoMissingFields.length > 0
+            const shouldEditMemberProfile = roleMissingFields.some((field) => field !== 'descrição da outra função')
 
             return (
               <article className="progression-row" key={user.uid}>
@@ -2852,24 +3896,58 @@ function ProfileProgressionManager() {
                 </div>
 
                 {user.role === 'visitante' ? (
-                  <button
-                    className="primary-action"
-                    disabled={busyUid === user.uid}
-                    onClick={() => runAction(user.uid, () => promoteVisitorToCongregado(user.uid))}
-                    type="button"
-                  >
-                    Tornar congregado
-                  </button>
+                  <div className="progression-actions">
+                    <span className="ready-note">Pode ser tornado congregado agora.</span>
+                    {congregadoProfileMissingFields.length > 0 ? (
+                      <div className="progression-pending-detail">
+                        <strong>Depois da promoção, ainda precisará completar:</strong>
+                        <span>{congregadoProfileMissingFields.join(', ')}</span>
+                        <button className="secondary-admin-action" type="button" onClick={() => openPendingEditor(user)}>
+                          <Pencil aria-hidden="true" />
+                          Editar cadastro
+                        </button>
+                      </div>
+                    ) : null}
+                    <button
+                      className="primary-action"
+                      disabled={busyUid === user.uid}
+                      onClick={() => runAction(user.uid, () => promoteVisitorToCongregado(user.uid))}
+                      type="button"
+                    >
+                      Tornar congregado
+                    </button>
+                  </div>
                 ) : null}
 
                 {user.role === 'congregado' ? (
                   <div className="progression-actions">
-                    <span className={isCongregadoComplete ? 'ready-note' : 'pending-note'}>
+                    <span className={congregadoMissingFields.length === 0 ? 'ready-note' : 'pending-note'}>
                       {isCongregadoComplete ? 'Dados completos' : 'Aguardando dados completos do usuário'}
                     </span>
+                    {memberPromotionMissing.length > 0 ? (
+                      <div className="progression-pending-detail">
+                        <strong>Falta preencher/informar:</strong>
+                        <span>{memberPromotionMissing.join(', ')}</span>
+                        <button
+                          className="secondary-admin-action"
+                          type="button"
+                          onClick={() =>
+                            shouldEditCongregadoProfile
+                              ? openPendingEditor(user)
+                              : focusPendingInput(baptismInputRefs.current[user.uid])
+                          }
+                        >
+                          <Pencil aria-hidden="true" />
+                          {shouldEditCongregadoProfile ? 'Resolver pendência' : 'Informar batismo'}
+                        </button>
+                      </div>
+                    ) : null}
                     <label>
                       Data de batismo
                       <input
+                        ref={(element) => {
+                          baptismInputRefs.current[user.uid] = element
+                        }}
                         type="date"
                         value={baptismDates[user.uid] ?? ''}
                         onChange={(event) =>
@@ -2879,7 +3957,7 @@ function ProfileProgressionManager() {
                     </label>
                     <button
                       className="primary-action"
-                      disabled={busyUid === user.uid || !isCongregadoComplete || !baptismDates[user.uid]}
+                      disabled={busyUid === user.uid || memberPromotionMissing.length > 0}
                       onClick={() => runAction(user.uid, () => promoteCongregadoToMembro(user.uid, baptismDates[user.uid]))}
                       type="button"
                     >
@@ -2890,6 +3968,26 @@ function ProfileProgressionManager() {
 
                 {user.role === 'membro' ? (
                   <div className="progression-actions">
+                    {roleMissingFields.length > 0 ? (
+                      <div className="progression-pending-detail">
+                        <strong>Pendência para atribuir função/cargo:</strong>
+                        <span>{roleMissingFields.join(', ')}</span>
+                        <button
+                          className="secondary-admin-action"
+                          type="button"
+                          onClick={() =>
+                            shouldEditMemberProfile
+                              ? openPendingEditor(user)
+                              : focusPendingInput(otherCargoInputRefs.current[user.uid])
+                          }
+                        >
+                          <Pencil aria-hidden="true" />
+                          {shouldEditMemberProfile ? 'Resolver pendência' : 'Especificar função'}
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="ready-note">Membro apto para receber ou alterar função.</span>
+                    )}
                     <label>
                       Cargo/função
                       <select
@@ -2910,6 +4008,9 @@ function ProfileProgressionManager() {
                       <label>
                         Especificar
                         <input
+                          ref={(element) => {
+                            otherCargoInputRefs.current[user.uid] = element
+                          }}
                           value={currentOtherCargo}
                           onChange={(event) =>
                             setOtherCargoByUid((current) => ({ ...current, [user.uid]: event.target.value }))
@@ -2919,7 +4020,7 @@ function ProfileProgressionManager() {
                     ) : null}
                     <button
                       className="primary-action"
-                      disabled={busyUid === user.uid || (selectedCargo === 'outro' && !currentOtherCargo.trim())}
+                      disabled={busyUid === user.uid || roleMissingFields.length > 0}
                       onClick={() =>
                         runAction(user.uid, () =>
                           updateMemberChurchRole(
@@ -2940,6 +4041,30 @@ function ProfileProgressionManager() {
           })}
         </div>
       )}
+
+      {editingPendingUser ? (
+        <div className="member-edit-panel progression-edit-panel" ref={pendingEditorRef}>
+          <div className="progression-edit-heading">
+            <div>
+              <p className="eyebrow">Correção de pendência</p>
+              <h3>{editingPendingUser.nomeCompleto}</h3>
+              <p>Atualize os dados abaixo e salve para liberar a progressão correspondente.</p>
+            </div>
+          </div>
+          <MemberCadastroEditor
+            extraRequiredFields={editingPendingUser.role === 'membro' ? ['dataBatismo'] : []}
+            highlightMissingRequired
+            mode="admin"
+            record={editingPendingUser}
+            onCancel={() => setEditingPendingUser(null)}
+            onSave={async (data) => {
+              await updateUserRegistrationProfile(editingPendingUser.uid, data)
+              setNotice('Pendência atualizada. Confira se a progressão já foi liberada.')
+              setEditingPendingUser(null)
+            }}
+          />
+        </div>
+      ) : null}
     </section>
   )
 }
