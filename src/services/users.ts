@@ -100,8 +100,12 @@ export async function completeVisitorProfile(uid: string, data: VisitorProfileDa
     throw new Error('Firebase não configurado.')
   }
 
+  const emailLower = data.email.trim().toLowerCase()
+
   await updateDoc(doc(db, 'users', uid), {
     ...data,
+    email: emailLower,
+    emailLower,
     role: 'visitante',
     updatedAt: serverTimestamp(),
   })
@@ -112,8 +116,12 @@ export async function completeCongregadoProfile(uid: string, data: CongregadoPro
     throw new Error('Firebase não configurado.')
   }
 
+  const emailLower = data.email.trim().toLowerCase()
+
   await updateDoc(doc(db, 'users', uid), {
     ...data,
+    email: emailLower,
+    emailLower,
     role: 'congregado',
     tipoPessoa: 'congregado',
     possuiCargo: false,
@@ -129,8 +137,12 @@ export async function markMemberRegistrationProfile(uid: string, data: MemberPro
     throw new Error('Firebase não configurado.')
   }
 
+  const emailLower = data.email.trim().toLowerCase()
+
   await updateDoc(doc(db, 'users', uid), {
     ...data,
+    email: emailLower,
+    emailLower,
     updatedAt: serverTimestamp(),
   })
 }

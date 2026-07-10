@@ -29,10 +29,16 @@ export type ExistingCpfRegistration = {
   telefone?: string
 }
 
+export type ExistingEmailRegistration = ExistingCpfRegistration
+
 const localStorageKey = 'adtrr-membership-requests'
 
 function onlyDigits(value: string) {
   return value.replace(/\D/g, '')
+}
+
+function normalizeEmail(value: string) {
+  return value.trim().toLowerCase()
 }
 
 function toExistingCpfRegistration(
@@ -131,14 +137,76 @@ export async function findExistingRegistrationByCpf(
   return null
 }
 
+export async function findExistingRegistrationByEmail(
+  email: string,
+  excludeUserId?: string,
+): Promise<ExistingEmailRegistration | null> {
+  const emailLower = normalizeEmail(email)
+
+  if (!emailLower) {
+    return null
+  }
+
+  if (!db) {
+    const saved = JSON.parse(localStorage.getItem(localStorageKey) ?? '[]') as Array<
+      MemberRegistration & { id: string; status?: string; userId?: string }
+    >
+    const existing = saved.find(
+      (item) => normalizeEmail(item.email) === emailLower && item.status !== 'rejeitado',
+    )
+    return existing ? toExistingCpfRegistration(existing.id, 'membershipRequests', existing) : null
+  }
+
+  const lookups = [
+    { source: 'members' as const, field: 'emailLower', value: emailLower },
+    { source: 'members' as const, field: 'email', value: emailLower },
+    { source: 'membershipRequests' as const, field: 'emailLower', value: emailLower },
+    { source: 'membershipRequests' as const, field: 'email', value: emailLower },
+    { source: 'users' as const, field: 'emailLower', value: emailLower },
+    { source: 'users' as const, field: 'email', value: emailLower },
+  ]
+
+  for (const lookup of lookups) {
+    try {
+      const snapshot = await getDocs(
+        query(collection(db, lookup.source), where(lookup.field, '==', lookup.value)),
+      )
+      const match = snapshot.docs.find((docSnapshot) => {
+        const data = docSnapshot.data()
+
+        if (data.status === 'rejeitado') {
+          return false
+        }
+
+        return !(lookup.source === 'users' && excludeUserId && docSnapshot.id === excludeUserId)
+      })
+
+      if (match) {
+        return toExistingCpfRegistration(
+          match.id,
+          lookup.source,
+          match.data() as Partial<MemberRegistration> & { status?: string },
+        )
+      }
+    } catch {
+      // Some section-limited users may not read every collection; continue with the allowed checks.
+    }
+  }
+
+  return null
+}
+
 export async function submitMembershipRequest(
   data: MemberRegistration,
   userId?: string,
 ): Promise<SubmissionResult> {
   const cpfDigits = onlyDigits(data.cpf)
+  const emailLower = normalizeEmail(data.email)
   const payload = {
     ...data,
     cpfDigits,
+    email: emailLower,
+    emailLower,
     ...(userId ? { userId } : {}),
     status: 'pendente',
     createdAt: db ? serverTimestamp() : new Date().toISOString(),
@@ -151,7 +219,7 @@ export async function submitMembershipRequest(
 
   const saved = JSON.parse(localStorage.getItem(localStorageKey) ?? '[]') as Array<MemberRegistration & { id: string }>
   const id = crypto.randomUUID()
-  localStorage.setItem(localStorageKey, JSON.stringify([...saved, { ...data, cpfDigits, id }]))
+  localStorage.setItem(localStorageKey, JSON.stringify([...saved, { ...data, email: emailLower, emailLower, cpfDigits, id }]))
   return { id, mode: 'local' }
 }
 
@@ -238,6 +306,8 @@ export async function decideMembershipRequest(
       ...registration,
       tipoPessoa: 'membro',
       cpfDigits: onlyDigits(registration.cpf),
+      email: normalizeEmail(registration.email),
+      emailLower: normalizeEmail(registration.email),
       userId: linkedUser?.uid ?? request.userId ?? null,
       membershipRequestId: request.id,
       status: 'ativo',
@@ -264,6 +334,8 @@ export async function decideMembershipRequest(
 
     batch.update(doc(db, 'users', linkedUser.uid), {
       ...registration,
+      email: normalizeEmail(registration.email),
+      emailLower: normalizeEmail(registration.email),
       role: accessRole,
       tipoPessoa: 'membro',
       updatedAt: decidedAt,

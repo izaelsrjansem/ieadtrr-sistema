@@ -4,8 +4,10 @@ import { z } from 'zod'
 import { useAuth } from '../context/AuthContext'
 import { churchRoleOptions, congregations as fallbackCongregations, logradouroOptions, personTypeOptions } from '../data/church'
 import {
+  findExistingRegistrationByEmail,
   findExistingRegistrationByCpf,
   submitMembershipRequest,
+  type ExistingEmailRegistration,
   type ExistingCpfRegistration,
 } from '../services/membership'
 import { subscribeCongregations } from '../services/congregations'
@@ -235,10 +237,6 @@ const registrationSchema = z
         ctx.addIssue({ code: 'custom', path: ['dataAceitacao'], message: 'Informe a data de aceitação.' })
       }
 
-      if (data.tipoPessoa === 'membro' && !data.dataBatismo) {
-        ctx.addIssue({ code: 'custom', path: ['dataBatismo'], message: 'Informe a data de batismo.' })
-      }
-
       if (data.dataBatismo) {
         const age = ageBetween(data.dataNascimento, data.dataBatismo)
         if (age !== null && age < 12) {
@@ -350,6 +348,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
   const [cepStatus, setCepStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [floatingNotice, setFloatingNotice] = useState('')
   const [existingCpfRegistration, setExistingCpfRegistration] = useState<ExistingCpfRegistration | null>(null)
+  const [existingEmailRegistration, setExistingEmailRegistration] = useState<ExistingEmailRegistration | null>(null)
   const [congregationList, setCongregationList] = useState<Congregation[]>(fallbackCongregations)
 
   const isMembro = form.tipoPessoa === 'membro'
@@ -490,6 +489,10 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
       setExistingCpfRegistration(null)
     }
 
+    if (field === 'email') {
+      setExistingEmailRegistration(null)
+    }
+
     if (field === 'tipoPessoa') {
       setErrors({})
       return
@@ -603,6 +606,27 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
     )
   }
 
+  function duplicateEmailAlert(compact = false) {
+    if (!existingEmailRegistration) {
+      return null
+    }
+
+    const AlertTag = compact ? 'span' : 'div'
+
+    return (
+      <AlertTag className={compact ? 'field-inline-alert duplicate-cpf-inline' : 'form-alert warning duplicate-cpf-alert'}>
+        <ShieldCheck aria-hidden="true" />
+        <span>
+          Este e-mail jÃ¡ estÃ¡ cadastrado em {existingCpfSourceLabel(existingEmailRegistration)}:{' '}
+          <strong>{existingEmailRegistration.nomeCompleto}</strong>
+          {existingEmailRegistration.status ? ` (${existingEmailRegistration.status})` : ''}. Busque, recupere o seu acesso,
+          use a opÃ§Ã£o de recuperar acesso, ou faÃ§a um cadastro com outro e-mail.
+          <small>Protocolo/ID: {existingEmailRegistration.id}</small>
+        </span>
+      </AlertTag>
+    )
+  }
+
   function baptismDateField() {
     if (!isMembro) {
       return null
@@ -612,8 +636,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
 
     return (
       <label className="baptism-date-field">
-        Data de batismo
-        <RequiredHint />
+        <span>Data de batismo <span className="optional-tag">(opcional)</span></span>
         <input
           className={fieldErrorClass('dataBatismo')}
           type="date"
@@ -621,7 +644,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
           onChange={(event) => updateField('dataBatismo', event.target.value)}
         />
         <small className="field-hint">
-          Obrigatório para membro. Para congregado este campo não aparece; ele será usado quando a pessoa for promovida a membro.
+          Para congregado este campo não aparece. Se informada, a data precisa respeitar a idade doutrinária do batismo.
         </small>
         {baptismNotice ? (
           <span className="field-inline-alert baptism-rule-alert">
@@ -673,10 +696,18 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
 
       const data = {
         ...parsed.data,
-        email: isAdminMode ? parsed.data.email.trim() : accountEmail || parsed.data.email.trim(),
+        email: (isAdminMode ? parsed.data.email.trim() : accountEmail || parsed.data.email.trim()).toLowerCase(),
       }
 
-      if (data.tipoPessoa === 'membro' || data.tipoPessoa === 'congregado') {
+      const existingEmail = await findExistingRegistrationByEmail(data.email, currentUid)
+      if (existingEmail) {
+        setExistingEmailRegistration(existingEmail)
+        setErrors({ email: 'Este e-mail jÃ¡ estÃ¡ cadastrado.' })
+        setStatus('idle')
+        return
+      }
+
+      if (isAdminMode && (data.tipoPessoa === 'membro' || data.tipoPessoa === 'congregado')) {
         const existingRegistration = await findExistingRegistrationByCpf(
           data.cpf,
           isAdminMode ? undefined : currentUid,
@@ -928,6 +959,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
                 ? 'Este cadastro não cria login nem senha para a pessoa.'
                 : 'Este e-mail vem do login usado para entrar no sistema.'}
             </small>
+            {duplicateEmailAlert(true)}
             {fieldError('email')}
           </label>
 
@@ -1232,6 +1264,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
       {fieldError('consentimentoLgpd')}
 
       {duplicateCpfAlert()}
+      {duplicateEmailAlert()}
 
       <button className="primary-action" type="submit" disabled={status === 'sending'}>
         {status === 'sending' ? 'Enviando...' : 'Enviar cadastro'}
@@ -1244,7 +1277,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
           {isAdminMode
             ? `Cadastro nominal registrado. Protocolo: ${lastProtocol}`
             : isMembro
-              ? `Cadastro enviado para aprovação. Protocolo: ${lastProtocol}`
+              ? `Cadastro de membro enviado para aprovação. Seu login continua ativo, mas as funções de membro serão liberadas após validação da administração. Protocolo: ${lastProtocol}`
               : 'Cadastro concluído. Acompanhe suas informações pela área correspondente.'}
         </div>
       ) : null}

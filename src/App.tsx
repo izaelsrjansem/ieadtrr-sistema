@@ -13,6 +13,7 @@ import {
   Heart,
   HelpCircle,
   Home,
+  Hourglass,
   Info,
   LayoutDashboard,
   LockKeyhole,
@@ -925,6 +926,24 @@ function RegistrationPage() {
     return <Navigate replace to="/admin" />
   }
 
+  if (profile?.role === 'pendente' && profile?.tipoPessoa === 'membro') {
+    return (
+      <section className="auth-page">
+        <div className="auth-panel status-panel">
+          <Hourglass aria-hidden="true" />
+          <h1>Cadastro em análise</h1>
+          <p>
+            Seu acesso já foi criado e o cadastro de membro foi enviado para validação da administração.
+            As funções de membro serão liberadas após a aprovação.
+          </p>
+          <Link className="primary-action" to="/membro">
+            Acompanhar cadastro
+          </Link>
+        </div>
+      </section>
+    )
+  }
+
   return (
     <section className="content-section registration-page">
       <div className="section-heading">
@@ -974,6 +993,12 @@ function CreateAccessPanel() {
     } catch (error) {
       const code = (error as { code?: string }).code
       setStatus('error')
+      if (code === 'auth/email-already-in-use') {
+        setErrorMessage(
+          'Este e-mail já está cadastrado. Busque, recupere o seu acesso, use a opção de recuperar acesso, ou faça um cadastro com outro e-mail.',
+        )
+        return
+      }
       setErrorMessage(
         code === 'auth/email-already-in-use'
           ? 'Este e-mail já tem cadastro. Use o botão Entre para acessar.'

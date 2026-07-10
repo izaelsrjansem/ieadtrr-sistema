@@ -33,6 +33,7 @@ export type AdminSectionKey =
 export type UserProfile = {
   uid: string
   email: string
+  emailLower?: string
   nomeCompleto: string
   role: SystemRole
   adminSectionAccess?: AdminSectionKey[]
@@ -79,6 +80,7 @@ export type DocumentoPaginas = 'unica' | 'multiplas'
 export type MemberRegistration = {
   nomeCompleto: string
   email: string
+  emailLower?: string
   telefone: string
   possuiWhatsapp: boolean
   convidadoPor?: string

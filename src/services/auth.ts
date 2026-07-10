@@ -20,7 +20,7 @@ export async function signIn(email: string, password: string, rememberLogin = fa
   }
 
   await setPersistence(auth, rememberLogin ? browserLocalPersistence : browserSessionPersistence)
-  return signInWithEmailAndPassword(auth, email, password)
+  return signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password)
 }
 
 export async function sendPasswordReset(email: string) {
@@ -28,7 +28,7 @@ export async function sendPasswordReset(email: string) {
     throw new Error(configErrorMessage)
   }
 
-  await sendPasswordResetEmail(auth, email)
+  await sendPasswordResetEmail(auth, email.trim().toLowerCase())
 }
 
 export async function signUp(email: string, password: string, nomeCompleto: string) {
@@ -36,12 +36,14 @@ export async function signUp(email: string, password: string, nomeCompleto: stri
     throw new Error(configErrorMessage)
   }
 
-  const credential = await createUserWithEmailAndPassword(auth, email, password)
+  const normalizedEmail = email.trim().toLowerCase()
+  const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password)
   await updateProfile(credential.user, { displayName: nomeCompleto })
 
   const profile: UserProfile = {
     uid: credential.user.uid,
-    email,
+    email: normalizedEmail,
+    emailLower: normalizedEmail,
     nomeCompleto,
     role: 'pendente',
     createdAt: new Date().toISOString(),
