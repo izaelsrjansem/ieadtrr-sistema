@@ -1596,25 +1596,6 @@ function AdminDashboard({ navigationItems }: { navigationItems: NavigationItem[]
           <>
             <AdminNominalRegistration />
             <MembershipApprovals />
-            <div className="table-panel">
-              <h2>Campos do cadastro de membros e congregados</h2>
-              <table>
-                <tbody>
-                  <tr>
-                    <td>Identificação</td>
-                    <td>Nome, CPF, RG, foto e tipo de pessoa</td>
-                  </tr>
-                  <tr>
-                    <td>Endereço</td>
-                    <td>CEP, rua, número, bairro, cidade, estado e complemento</td>
-                  </tr>
-                  <tr>
-                    <td>Vida cristã</td>
-                    <td>Cargo/função, batismo, aceitação, carta de mudança e recomendação</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
           </>
         )
       case 'membros':
