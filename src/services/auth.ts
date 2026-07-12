@@ -2,6 +2,7 @@ import {
   createUserWithEmailAndPassword,
   browserLocalPersistence,
   browserSessionPersistence,
+  sendEmailVerification,
   sendPasswordResetEmail,
   setPersistence,
   signInWithEmailAndPassword,
@@ -14,6 +15,11 @@ import { auth, db, isFirebaseConfigured } from '../lib/firebase'
 import type { UserProfile } from '../types'
 
 const configErrorMessage = 'Firebase ainda não está configurado nesta instalação.'
+
+type SignUpOptions = {
+  sendVerificationEmail?: boolean
+  initialProfile?: Partial<UserProfile>
+}
 
 export async function signIn(email: string, password: string, rememberLogin = false) {
   if (!auth) {
@@ -32,7 +38,7 @@ export async function sendPasswordReset(email: string) {
   await sendPasswordResetEmail(auth, email.trim().toLowerCase())
 }
 
-export async function signUp(email: string, password: string, nomeCompleto: string) {
+export async function signUp(email: string, password: string, nomeCompleto: string, options: SignUpOptions = {}): Promise<string> {
   if (!auth || !db) {
     throw new Error(configErrorMessage)
   }
@@ -48,9 +54,33 @@ export async function signUp(email: string, password: string, nomeCompleto: stri
     nomeCompleto,
     role: 'pendente',
     createdAt: new Date().toISOString(),
+    ...options.initialProfile,
   }
 
   await setDoc(doc(db, 'users', credential.user.uid), profile)
+
+  if (options.sendVerificationEmail) {
+    await sendEmailVerification(credential.user)
+  }
+
+  return credential.user.uid
+}
+
+export async function sendCurrentUserVerificationEmail() {
+  if (!auth?.currentUser) {
+    throw new Error(configErrorMessage)
+  }
+
+  await sendEmailVerification(auth.currentUser)
+}
+
+export async function refreshCurrentUserEmailVerification(): Promise<boolean> {
+  if (!auth?.currentUser) {
+    throw new Error(configErrorMessage)
+  }
+
+  await auth.currentUser.reload()
+  return auth.currentUser.emailVerified
 }
 
 export async function requestAccessEmailChange(newEmail: string) {

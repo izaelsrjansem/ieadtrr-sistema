@@ -25,8 +25,11 @@ export type SystemRole = 'pendente' | 'visitante' | 'congregado' | 'membro' | 'd
 
 export type AdminSectionKey =
   | 'cadastros'
+  | 'aprovacao_cadastros'
   | 'membros'
   | 'presencas'
+  | 'dashboard_registros'
+  | 'relatorio_visitantes'
   | 'congregacoes'
   | 'usuarios'
   | 'auditoria'
@@ -39,6 +42,7 @@ export type UserProfile = {
   nomeCompleto: string
   role: SystemRole
   adminSectionAccess?: AdminSectionKey[]
+  pendingFirstAccess?: boolean
   createdAt: string
   tipoPessoa?: PublicPersonType
   congregacao?: string
@@ -50,6 +54,7 @@ export type UserProfile = {
   cpf?: string
   cpfDigits?: string
   rg?: string
+  rgUf?: string
   endereco?: Address
   dataAceitacao?: string
   dataBatismo?: string
@@ -57,6 +62,7 @@ export type UserProfile = {
   cargo?: ChurchRole
   outroCargo?: string
   fotoModo?: 'unica' | 'frente_verso'
+  selfieArquivo?: string
   fotoArquivo?: string
   fotoVersoArquivo?: string
   cartaMudancaPaginas?: DocumentoPaginas
@@ -68,6 +74,7 @@ export type UserProfile = {
 }
 
 export type Address = {
+  pais: string
   tipoLogradouro: string
   cep: string
   rua: string
@@ -90,6 +97,7 @@ export type MemberRegistration = {
   cpf: string
   cpfDigits?: string
   rg: string
+  rgUf: string
   dataNascimento: string
   sexo: CadastroSexo | ''
   tipoPessoa: PublicPersonType
@@ -101,6 +109,7 @@ export type MemberRegistration = {
   dataBatismo?: string
   dataAceitacao?: string
   fotoModo: 'unica' | 'frente_verso'
+  selfieArquivo?: string
   fotoArquivo?: string
   fotoVersoArquivo?: string
   cartaMudancaPaginas: DocumentoPaginas
@@ -180,6 +189,8 @@ export type VisitRecord = {
   congregationId: string
   congregationName: string
   visitDate: string
+  visitWeekday?: number
+  visitWeekdayLabel?: string
   session: VisitSession
   source?: 'self' | 'admin'
   recordedBy?: string

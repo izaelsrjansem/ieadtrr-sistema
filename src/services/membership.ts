@@ -19,6 +19,13 @@ type SubmissionResult = {
   mode: 'firebase' | 'local'
 }
 
+type ClaimResult = {
+  linked: boolean
+  source?: 'members' | 'membershipRequests'
+  id?: string
+  role?: 'membro' | 'congregado' | 'visitante' | 'pendente'
+}
+
 export type ExistingCpfRegistration = {
   id: string
   source: 'members' | 'membershipRequests' | 'users'
@@ -223,6 +230,103 @@ export async function submitMembershipRequest(
   return { id, mode: 'local' }
 }
 
+function accessRoleFromRegistration(data: Partial<MemberRegistration> & { status?: string }): ClaimResult['role'] {
+  if (data.tipoPessoa === 'congregado') {
+    return 'congregado'
+  }
+
+  if (data.tipoPessoa === 'visitante' || data.tipoPessoa === 'convidado') {
+    return 'visitante'
+  }
+
+  if (data.tipoPessoa === 'membro') {
+    return data.status === 'inativo' ? 'pendente' : 'membro'
+  }
+
+  return 'pendente'
+}
+
+function linkedUserProfilePayload(
+  uid: string,
+  data: Partial<MemberRegistration> & { status?: string },
+): Record<string, unknown> {
+  const emailLower = normalizeEmail(data.email ?? '')
+  const role = accessRoleFromRegistration(data)
+
+  return {
+    uid,
+    email: emailLower,
+    emailLower,
+    nomeCompleto: data.nomeCompleto ?? '',
+    role,
+    tipoPessoa: data.tipoPessoa ?? 'membro',
+    congregacao: data.congregacao ?? '',
+    telefone: data.telefone ?? '',
+    dataNascimento: data.dataNascimento ?? '',
+    sexo: data.sexo ?? '',
+    cpf: data.cpf ?? '',
+    cpfDigits: data.cpf ? onlyDigits(data.cpf) : data.cpfDigits ?? '',
+    rg: data.rg ?? '',
+    endereco: data.endereco ?? null,
+    dataAceitacao: data.dataAceitacao ?? '',
+    possuiWhatsapp: data.possuiWhatsapp ?? false,
+    linkedFromAdminRegistration: true,
+    pendingFirstAccess: false,
+    linkedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  }
+}
+
+export async function claimExistingRegistrationByEmail(uid: string, email: string): Promise<ClaimResult> {
+  const emailLower = normalizeEmail(email)
+
+  if (!db || !emailLower) {
+    return { linked: false }
+  }
+
+  const lookups = [
+    { source: 'members' as const, collectionName: 'members' },
+    { source: 'membershipRequests' as const, collectionName: 'membershipRequests' },
+  ]
+
+  for (const lookup of lookups) {
+    const snapshot = await getDocs(
+      query(collection(db, lookup.collectionName), where('emailLower', '==', emailLower)),
+    )
+
+    const match = snapshot.docs.find((docSnapshot) => {
+      const data = docSnapshot.data() as { userId?: string | null; status?: string }
+      return data.status !== 'rejeitado' && (!data.userId || data.userId === uid)
+    })
+
+    if (!match) {
+      continue
+    }
+
+    const data = match.data() as Partial<MemberRegistration> & { status?: string }
+    const batch = writeBatch(db)
+    const linkedAt = serverTimestamp()
+
+    batch.update(doc(db, lookup.collectionName, match.id), {
+      userId: uid,
+      linkedBy: uid,
+      linkedAt,
+      updatedAt: linkedAt,
+    })
+    batch.set(doc(db, 'users', uid), linkedUserProfilePayload(uid, data), { merge: true })
+    await batch.commit()
+
+    return {
+      linked: true,
+      source: lookup.source,
+      id: match.id,
+      role: accessRoleFromRegistration(data),
+    }
+  }
+
+  return { linked: false }
+}
+
 export function subscribeMembershipRequests(
   onData: (requests: MembershipRequest[]) => void,
   onError?: (error: Error) => void,
@@ -344,4 +448,77 @@ export async function decideMembershipRequest(
 
   await batch.commit()
   return { linkedUserUid: linkedUser?.uid }
+}
+
+export async function updateMembershipRequestProfile(
+  requestId: string,
+  data: Partial<MemberRegistration>,
+): Promise<void> {
+  if (!db) {
+    throw new Error('Firebase nÃ£o configurado.')
+  }
+
+  const emailLower = data.email ? normalizeEmail(data.email) : undefined
+
+  await updateDoc(doc(db, 'membershipRequests', requestId), {
+    ...data,
+    ...(emailLower ? { email: emailLower, emailLower } : {}),
+    ...(data.cpf ? { cpfDigits: onlyDigits(data.cpf) } : {}),
+    updatedAt: serverTimestamp(),
+  })
+}
+
+export async function promoteNominalCongregadoRequestToMembro(
+  request: MembershipRequest,
+  dataBatismo: string,
+  adminUid: string,
+): Promise<void> {
+  if (!db) {
+    throw new Error('Firebase nÃ£o configurado.')
+  }
+
+  const requestRef = doc(db, 'membershipRequests', request.id)
+  const memberDocumentId = request.cpf ? onlyDigits(request.cpf) : request.id
+  const decidedAt = serverTimestamp()
+  const {
+    id: _id,
+    status: _status,
+    criadoEm: _criadoEm,
+    decididoEm: _decididoEm,
+    decididoPor: _decididoPor,
+    linkedUserUid: _linkedUserUid,
+    ...registration
+  } = request as MembershipRequest & { criadoEm?: unknown }
+
+  const batch = writeBatch(db)
+
+  batch.set(
+    doc(db, 'members', memberDocumentId),
+    {
+      ...registration,
+      tipoPessoa: 'membro',
+      dataBatismo,
+      cpfDigits: onlyDigits(registration.cpf),
+      email: normalizeEmail(registration.email),
+      emailLower: normalizeEmail(registration.email),
+      membershipRequestId: request.id,
+      status: 'ativo',
+      createdAt: request.createdAt ?? decidedAt,
+      updatedAt: decidedAt,
+      approvedAt: decidedAt,
+      approvedBy: adminUid,
+    },
+    { merge: true },
+  )
+
+  batch.update(requestRef, {
+    tipoPessoa: 'membro',
+    dataBatismo,
+    status: 'aprovado',
+    decididoEm: decidedAt,
+    decididoPor: adminUid,
+    updatedAt: decidedAt,
+  })
+
+  await batch.commit()
 }

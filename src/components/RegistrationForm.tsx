@@ -2,7 +2,15 @@ import { useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, FileUp, MessageCircle, Send, ShieldCheck, UserRound, X } from 'lucide-react'
 import { z } from 'zod'
 import { useAuth } from '../context/AuthContext'
-import { churchRoleOptions, congregations as fallbackCongregations, logradouroOptions, personTypeOptions } from '../data/church'
+import {
+  brazilStates,
+  churchRoleOptions,
+  congregations as fallbackCongregations,
+  logradouroOptions,
+  personTypeOptions,
+  roraimaMunicipalities,
+} from '../data/church'
+import { NeighborhoodCombobox, OptionsCombobox } from './NeighborhoodCombobox'
 import {
   findExistingRegistrationByEmail,
   findExistingRegistrationByCpf,
@@ -47,6 +55,28 @@ function maskPhone(value: string): string {
 function maskCep(value: string): string {
   const digits = onlyDigits(value).slice(0, 8)
   return digits.replace(/(\d{5})(\d)/, '$1-$2')
+}
+
+function splitStreetType(logradouro?: string): { tipoLogradouro: string; rua: string } {
+  const street = logradouro?.trim() ?? ''
+
+  if (!street) {
+    return { tipoLogradouro: '', rua: '' }
+  }
+
+  const matchedType = logradouroOptions.find((option) => {
+    const prefix = `${option} `
+    return street.toLocaleLowerCase('pt-BR').startsWith(prefix.toLocaleLowerCase('pt-BR'))
+  })
+
+  if (!matchedType) {
+    return { tipoLogradouro: '', rua: street }
+  }
+
+  return {
+    tipoLogradouro: matchedType,
+    rua: street.slice(matchedType.length).trim(),
+  }
 }
 
 function isValidCpf(value: string): boolean {
@@ -141,6 +171,7 @@ const registrationSchema = z
     convidadoPor: z.string().optional(),
     cpf: z.string(),
     rg: z.string(),
+    rgUf: z.string(),
     dataNascimento: z.string(),
     sexo: z.enum(['', 'masculino', 'feminino']),
     tipoPessoa: z.enum(['visitante', 'membro', 'convidado', 'congregado']),
@@ -149,6 +180,7 @@ const registrationSchema = z
     outroCargo: z.string().optional(),
     congregacao: z.string(),
     endereco: z.object({
+      pais: z.string(),
       tipoLogradouro: z.string(),
       cep: z.string(),
       rua: z.string(),
@@ -214,6 +246,10 @@ const registrationSchema = z
         ctx.addIssue({ code: 'custom', path: ['cpf'], message: 'Informe um CPF válido.' })
       }
 
+      if (!data.endereco.pais.trim()) {
+        ctx.addIssue({ code: 'custom', path: ['endereco', 'pais'], message: 'Informe o país.' })
+      }
+
       if (!data.endereco.tipoLogradouro) {
         ctx.addIssue({ code: 'custom', path: ['endereco', 'tipoLogradouro'], message: 'Selecione o tipo de logradouro.' })
       }
@@ -240,6 +276,10 @@ const registrationSchema = z
 
       if (data.tipoPessoa === 'congregado' && !data.dataAceitacao) {
         ctx.addIssue({ code: 'custom', path: ['dataAceitacao'], message: 'Informe a data de aceitação.' })
+      }
+
+      if (data.tipoPessoa === 'membro' && !data.dataBatismo) {
+        ctx.addIssue({ code: 'custom', path: ['dataBatismo'], message: 'Informe a data de batismo para cadastrar como membro.' })
       }
 
       if (data.dataBatismo) {
@@ -273,6 +313,7 @@ type RegistrationFormProps = {
   mode?: 'self' | 'admin'
   fixedTipoPessoa?: PublicPersonType
   allowedPersonTypes?: PublicPersonType[]
+  onSuccess?: (result: { protocol: string; nomeCompleto: string; tipoPessoa: PublicPersonType }) => void
 }
 
 const initialForm: MemberRegistration = {
@@ -283,6 +324,7 @@ const initialForm: MemberRegistration = {
   convidadoPor: '',
   cpf: '',
   rg: '',
+  rgUf: 'RR',
   dataNascimento: '',
   sexo: '',
   tipoPessoa: 'visitante',
@@ -291,6 +333,7 @@ const initialForm: MemberRegistration = {
   outroCargo: '',
   congregacao: '',
   endereco: {
+    pais: 'Brasil',
     tipoLogradouro: '',
     cep: '',
     rua: '',
@@ -342,7 +385,7 @@ function personTypeLabel(value: PublicPersonType): string {
   return personTypeOptions.find((option) => option.value === value)?.label ?? value
 }
 
-export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPersonTypes }: RegistrationFormProps) {
+export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPersonTypes, onSuccess }: RegistrationFormProps) {
   const { firebaseUser, profile } = useAuth()
   const isAdminMode = mode === 'admin'
   const accountEmail = isAdminMode ? '' : (firebaseUser?.email ?? profile?.email ?? '')
@@ -351,6 +394,8 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
   const [errors, setErrors] = useState<ErrorMap>({})
   const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle')
   const [lastProtocol, setLastProtocol] = useState<string>('')
+  const [lastSuccessName, setLastSuccessName] = useState<string>('')
+  const [lastSuccessType, setLastSuccessType] = useState<PublicPersonType>('visitante')
   const [cepStatus, setCepStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [floatingNotice, setFloatingNotice] = useState('')
   const [existingCpfRegistration, setExistingCpfRegistration] = useState<ExistingCpfRegistration | null>(null)
@@ -544,11 +589,15 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
         return
       }
 
+      const streetParts = splitStreetType(data.logradouro)
+
       setForm((current) => ({
         ...current,
         endereco: {
           ...current.endereco,
-          rua: data.logradouro || current.endereco.rua,
+          pais: 'Brasil',
+          tipoLogradouro: streetParts.tipoLogradouro || current.endereco.tipoLogradouro,
+          rua: streetParts.rua || current.endereco.rua,
           bairro: data.bairro || current.endereco.bairro,
           cidade: data.localidade || current.endereco.cidade,
           estado: data.uf || current.endereco.estado,
@@ -556,6 +605,8 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
       }))
       setErrors((current) => {
         const {
+          ['endereco.pais']: _pais,
+          ['endereco.tipoLogradouro']: _tipoLogradouro,
           ['endereco.rua']: _rua,
           ['endereco.bairro']: _bairro,
           ['endereco.cidade']: _cidade,
@@ -644,7 +695,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
 
     return (
       <label className="baptism-date-field">
-        <span>Data de batismo <span className="optional-tag">(opcional)</span></span>
+        <span>Data de batismo {isMembro ? <RequiredHint /> : <span className="optional-tag">(opcional)</span>}</span>
         <input
           className={fieldErrorClass('dataBatismo')}
           type="date"
@@ -652,7 +703,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
           onChange={(event) => updateField('dataBatismo', event.target.value)}
         />
         <small className="field-hint">
-          Para congregado este campo não aparece. Se informada, a data precisa respeitar a idade doutrinária do batismo.
+          Para congregado este campo não aparece. Para membro, a data de batismo é obrigatória e precisa respeitar a idade doutrinária.
         </small>
         {baptismNotice ? (
           <span className="field-inline-alert baptism-rule-alert">
@@ -697,6 +748,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
 
     try {
       const currentUid = firebaseUser?.uid ?? ''
+      let successProtocol = ''
 
       if (!isAdminMode && !currentUid) {
         throw new Error('auth-required')
@@ -736,6 +788,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
 
       if (isAdminMode) {
         const result = await submitMembershipRequest(data as MemberRegistration)
+        successProtocol = result.id
         setLastProtocol(result.id)
         setForm(initialForm)
       } else if (isCongregado) {
@@ -749,6 +802,7 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
         })
       } else if (isMembro) {
         const result = await submitMembershipRequest(data as MemberRegistration, currentUid)
+        successProtocol = result.id
         await markMemberRegistrationProfile(currentUid, {
           email: data.email,
           nomeCompleto: data.nomeCompleto.trim(),
@@ -773,7 +827,10 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
         })
       }
 
+      setLastSuccessName(data.nomeCompleto.trim())
+      setLastSuccessType(data.tipoPessoa)
       setStatus('success')
+      onSuccess?.({ protocol: successProtocol, nomeCompleto: data.nomeCompleto.trim(), tipoPessoa: data.tipoPessoa })
     } catch (error) {
       const code = (error as { code?: string }).code
 
@@ -884,10 +941,24 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
                 <input
                   className={fieldErrorClass('rg')}
                   value={form.rg}
-                  onChange={(event) => updateField('rg', event.target.value)}
+                  onChange={(event) => updateField('rg', onlyDigits(event.target.value))}
+                  inputMode="numeric"
                   placeholder="Número do RG"
                 />
                 {fieldError('rg')}
+              </label>
+
+              <label>
+                UF do RG
+                <span className="optional-tag">(opcional)</span>
+                <select value={form.rgUf} onChange={(event) => updateField('rgUf', event.target.value)}>
+                  <option value="">Selecione</option>
+                  {brazilStates.map((state) => (
+                    <option key={state.uf} value={state.uf}>
+                      {state.uf}
+                    </option>
+                  ))}
+                </select>
               </label>
             </>
           ) : null}
@@ -1005,8 +1076,62 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
                     ? 'Buscando endereço...'
                     : cepStatus === 'error'
                       ? 'CEP não encontrado. Preencha manualmente.'
-                      : 'Preenche rua, bairro, cidade e estado automaticamente.'}
+                      : 'Preenche tipo de logradouro, rua, bairro, município e estado automaticamente.'}
                 </small>
+              </label>
+
+              <label>
+                País
+                <RequiredHint />
+                <input
+                  className={fieldErrorClass('endereco.pais')}
+                  value={form.endereco.pais}
+                  onChange={(event) => updateAddress('pais', event.target.value)}
+                />
+                {fieldError('endereco.pais')}
+              </label>
+
+              <label>
+                Estado
+                <RequiredHint />
+                <select
+                  className={fieldErrorClass('endereco.estado')}
+                  value={form.endereco.estado}
+                  onChange={(event) => updateAddress('estado', event.target.value)}
+                >
+                  <option value="">Selecione</option>
+                  {brazilStates.map((state) => (
+                    <option key={state.uf} value={state.uf}>
+                      {state.uf} - {state.nome}
+                    </option>
+                  ))}
+                </select>
+                {fieldError('endereco.estado')}
+              </label>
+
+              <label>
+                Município
+                <RequiredHint />
+                <OptionsCombobox
+                  className={fieldErrorClass('endereco.cidade')}
+                  value={form.endereco.cidade}
+                  onChange={(value) => updateAddress('cidade', value)}
+                  options={roraimaMunicipalities}
+                  placeholder="Digite para buscar o município"
+                  emptyText="Nenhum município encontrado"
+                />
+                {fieldError('endereco.cidade')}
+              </label>
+
+              <label>
+                Bairro
+                <RequiredHint />
+                <NeighborhoodCombobox
+                  className={fieldErrorClass('endereco.bairro')}
+                  value={form.endereco.bairro}
+                  onChange={(value) => updateAddress('bairro', value)}
+                />
+                {fieldError('endereco.bairro')}
               </label>
 
               <label>
@@ -1061,38 +1186,6 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
                 />
               </label>
 
-              <label>
-                Bairro
-                <RequiredHint />
-                <input
-                  className={fieldErrorClass('endereco.bairro')}
-                  value={form.endereco.bairro}
-                  onChange={(event) => updateAddress('bairro', event.target.value)}
-                />
-                {fieldError('endereco.bairro')}
-              </label>
-
-              <label>
-                Cidade
-                <RequiredHint />
-                <input
-                  className={fieldErrorClass('endereco.cidade')}
-                  value={form.endereco.cidade}
-                  onChange={(event) => updateAddress('cidade', event.target.value)}
-                />
-                {fieldError('endereco.cidade')}
-              </label>
-
-              <label>
-                Estado
-                <RequiredHint />
-                <input
-                  className={fieldErrorClass('endereco.estado')}
-                  value={form.endereco.estado}
-                  onChange={(event) => updateAddress('estado', event.target.value)}
-                />
-                {fieldError('endereco.estado')}
-              </label>
             </>
           ) : null}
         </div>
@@ -1300,10 +1393,10 @@ export function RegistrationForm({ mode = 'self', fixedTipoPessoa, allowedPerson
         <div className="form-alert success">
           <CheckCircle2 aria-hidden="true" />
           {isAdminMode
-            ? `Cadastro nominal registrado. Protocolo: ${lastProtocol}`
+            ? `Cadastro nominal de ${lastSuccessName || personTypeLabel(lastSuccessType)} registrado. Protocolo: ${lastProtocol}`
             : isMembro
-              ? `Cadastro de membro enviado para aprovação. Seu login continua ativo, mas as funções de membro serão liberadas após validação da administração. Protocolo: ${lastProtocol}`
-              : 'Cadastro concluído. Acompanhe suas informações pela área correspondente.'}
+              ? `Cadastro de ${lastSuccessName || 'membro'} enviado para aprovação. Seu login continua ativo, mas as funções de membro serão liberadas após validação da administração. Protocolo: ${lastProtocol}`
+              : `Cadastro de ${lastSuccessName || personTypeLabel(lastSuccessType)} concluído. Acompanhe suas informações pela área correspondente.`}
         </div>
       ) : null}
 

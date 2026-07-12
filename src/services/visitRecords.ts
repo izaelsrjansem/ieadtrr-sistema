@@ -11,6 +11,16 @@ export function visitRecordId(userId: string, visitDate: string, session: VisitS
   return `${userId}_${visitDate}_${session}`
 }
 
+function visitWeekdayInfo(visitDate: string): { visitWeekday: number; visitWeekdayLabel: string } {
+  const date = new Date(`${visitDate}T12:00:00`)
+  const visitWeekday = Number.isNaN(date.getTime()) ? 0 : date.getDay()
+  const visitWeekdayLabel = Number.isNaN(date.getTime())
+    ? ''
+    : date.toLocaleDateString('pt-BR', { weekday: 'long' })
+
+  return { visitWeekday, visitWeekdayLabel }
+}
+
 export function subscribeVisitRecords(
   onData: (records: VisitRecord[]) => void,
   onError?: (error: Error) => void,
@@ -77,6 +87,7 @@ export async function upsertVisitRecord(data: VisitRecordInput): Promise<string>
     ref,
     {
       ...data,
+      ...visitWeekdayInfo(data.visitDate),
       registeredAt: existing.exists() ? existing.data().registeredAt : serverTimestamp(),
       updatedAt: serverTimestamp(),
     },
@@ -93,6 +104,7 @@ export async function createNominalVisitRecord(data: NominalVisitRecordInput): P
 
   const docRef = await addDoc(collection(db, 'visitRecords'), {
     ...data,
+    ...visitWeekdayInfo(data.visitDate),
     userId: `nominal-${data.recordedBy}`,
     source: 'admin',
     registeredAt: serverTimestamp(),

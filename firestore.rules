@@ -45,6 +45,36 @@ service cloud.firestore {
         && protectedProfileFieldsUnchanged();
     }
 
+    function selfLinkedProfileActivation() {
+      return resource.data.role == 'pendente'
+        && request.resource.data.emailLower == resource.data.emailLower
+        && request.resource.data.role in ['visitante', 'congregado', 'membro', 'pendente']
+        && !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['possuiCargo', 'cargo', 'outroCargo', 'dataBatismo']);
+    }
+
+    function emailMatchesSignedInUser() {
+      return signedIn()
+        && resource.data.emailLower == request.auth.token.email;
+    }
+
+    function registrationClaimFieldsOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['userId', 'linkedBy', 'linkedAt', 'updatedAt']);
+    }
+
+    function registrationIsUnclaimedOrSelf() {
+      return !resource.data.keys().hasAny(['userId'])
+        || resource.data.userId == null
+        || resource.data.userId == request.auth.uid;
+    }
+
+    function approvalPromotesMemberAccess() {
+      return hasAdminSection('aprovacao_cadastros')
+        && resource.data.role == 'pendente'
+        && request.resource.data.role == 'membro';
+    }
+
     match /siteSettings/{document=**} {
       allow read: if true;
       allow write: if hasAdminSection('site');
@@ -67,37 +97,54 @@ service cloud.firestore {
 
     match /membershipRequests/{requestId} {
       allow create: if signedIn();
-      allow read: if isDiretoria() || hasAdminSection('cadastros');
-      allow update, delete: if hasAdminSection('cadastros');
+      allow read: if isDiretoria()
+        || hasAdminSection('cadastros')
+        || hasAdminSection('aprovacao_cadastros')
+        || emailMatchesSignedInUser();
+      allow update: if hasAdminSection('aprovacao_cadastros')
+        || (emailMatchesSignedInUser() && registrationIsUnclaimedOrSelf() && registrationClaimFieldsOnly());
+      allow delete: if hasAdminSection('aprovacao_cadastros');
     }
 
     match /visitRecords/{recordId} {
       allow create: if signedIn()
         && (request.resource.data.userId == request.auth.uid || isDiretoria() || hasAdminSection('presencas'));
       allow read: if signedIn()
-        && (resource.data.userId == request.auth.uid || isDiretoria() || hasAdminSection('presencas'));
+        && (resource.data.userId == request.auth.uid
+          || isDiretoria()
+          || hasAdminSection('dashboard_registros')
+          || hasAdminSection('relatorio_visitantes'));
       allow update: if signedIn()
         && (
           (resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid)
           || isDiretoria()
-          || hasAdminSection('presencas')
+          || hasAdminSection('dashboard_registros')
         );
-      allow delete: if hasAdminSection('presencas');
+      allow delete: if hasAdminSection('dashboard_registros');
     }
 
     match /users/{userId} {
       allow create: if (signedIn() && request.auth.uid == userId
           && request.resource.data.role == 'pendente')
         || isAdmin();
-      allow read: if signedIn() && (request.auth.uid == userId || isDiretoria() || hasAdminSection('usuarios'));
+      allow read: if signedIn()
+        && (request.auth.uid == userId
+          || isDiretoria()
+          || hasAdminSection('usuarios')
+          || hasAdminSection('aprovacao_cadastros'));
       allow update: if (signedIn() && request.auth.uid == userId
-          && (selfProfileUpdate() || selfVisitorActivation()))
-        || isAdmin();
+          && (selfProfileUpdate() || selfVisitorActivation() || selfLinkedProfileActivation()))
+        || isAdmin()
+        || approvalPromotesMemberAccess();
       allow delete: if isAdmin();
     }
 
     match /members/{memberId} {
-      allow read, write: if hasAdminSection('membros');
+      allow read: if hasAdminSection('membros') || emailMatchesSignedInUser();
+      allow create: if hasAdminSection('membros') || hasAdminSection('aprovacao_cadastros');
+      allow update: if hasAdminSection('membros')
+        || (emailMatchesSignedInUser() && registrationIsUnclaimedOrSelf() && registrationClaimFieldsOnly());
+      allow delete: if hasAdminSection('membros');
     }
 
     match /serviceSchedules/{document=**} {
