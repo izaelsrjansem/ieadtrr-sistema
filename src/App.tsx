@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   BarChart3,
   BookOpen,
   CalendarDays,
   Check,
   CheckCircle2,
+  ChevronDown,
   Clock,
   Building2,
   Flame,
@@ -95,7 +96,6 @@ import {
 } from './services/membership'
 import { defaultNavigationItems, saveNavigationItems, subscribeNavigationItems } from './services/siteNavigation'
 import {
-  getUserProfile,
   promoteCongregadoToMembro,
   promoteVisitorToCongregado,
   syncUserAccessEmail,
@@ -667,6 +667,156 @@ function newNavigationItem(items: NavigationItem[]): NavigationItem {
   }
 }
 
+const JUST_LOGGED_IN_KEY = 'ieadtrr-just-logged-in'
+
+function profileNeedsCompletion(profile: UserProfile | null): boolean {
+  if (!profile) {
+    return false
+  }
+
+  if (profile.role === 'pendente' && !profile.tipoPessoa) {
+    return true
+  }
+
+  if (profile.tipoPessoa === 'membro' || profile.tipoPessoa === 'congregado') {
+    return memberEditorMissingRequiredFields(editableRecordToForm(profile)).size > 0
+  }
+
+  return false
+}
+
+type SessionUiValue = {
+  openSelfEditor: (highlightMissing?: boolean) => void
+}
+
+const SessionUiContext = createContext<SessionUiValue | null>(null)
+
+function useSessionUi(): SessionUiValue {
+  const context = useContext(SessionUiContext)
+  if (!context) {
+    throw new Error('useSessionUi deve ser usado dentro de SessionUiProvider.')
+  }
+  return context
+}
+
+function SessionUiProvider({ children }: { children: ReactNode }) {
+  const { firebaseUser, profile, loading } = useAuth()
+  const navigate = useNavigate()
+  const [welcomeVisible, setWelcomeVisible] = useState(false)
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [highlightMissing, setHighlightMissing] = useState(false)
+  const [reminderDismissed, setReminderDismissed] = useState(false)
+
+  useEffect(() => {
+    if (loading || !firebaseUser) {
+      return
+    }
+
+    if (sessionStorage.getItem(JUST_LOGGED_IN_KEY) !== '1') {
+      return
+    }
+
+    sessionStorage.removeItem(JUST_LOGGED_IN_KEY)
+    setWelcomeVisible(true)
+  }, [firebaseUser, loading])
+
+  useEffect(() => {
+    if (!welcomeVisible) {
+      return
+    }
+
+    const timer = window.setTimeout(() => setWelcomeVisible(false), 1600)
+    return () => window.clearTimeout(timer)
+  }, [welcomeVisible])
+
+  function openSelfEditor(highlight = false) {
+    setHighlightMissing(highlight)
+    setEditorOpen(true)
+  }
+
+  function handleCompletar() {
+    if (profile && profile.role === 'pendente' && !profile.tipoPessoa) {
+      navigate('/cadastro')
+      return
+    }
+    openSelfEditor(true)
+  }
+
+  const displayName = profile?.nomeCompleto || firebaseUser?.email || ''
+  const showReminder =
+    Boolean(firebaseUser && profile) &&
+    profileNeedsCompletion(profile) &&
+    !welcomeVisible &&
+    !editorOpen &&
+    !reminderDismissed
+
+  return (
+    <SessionUiContext.Provider value={{ openSelfEditor }}>
+      {children}
+
+      {welcomeVisible ? (
+        <div className="session-modal-overlay welcome-overlay">
+          <div className="welcome-card">
+            <CheckCircle2 aria-hidden="true" />
+            <strong>Login realizado com sucesso!</strong>
+            <span>Bem-vindo(a), {displayName}.</span>
+          </div>
+        </div>
+      ) : null}
+
+      {showReminder ? (
+        <div className="complete-reminder">
+          <div className="complete-reminder-text">
+            <Info aria-hidden="true" />
+            <div>
+              <strong>Seu cadastro está incompleto</strong>
+              <p>Faltam informações obrigatórias. Complete para concluir seu cadastro.</p>
+            </div>
+          </div>
+          <div className="complete-reminder-actions">
+            <button className="primary-action" type="button" onClick={handleCompletar}>
+              <Pencil aria-hidden="true" />
+              Completar cadastro
+            </button>
+            <button className="link-button" type="button" onClick={() => setReminderDismissed(true)}>
+              Agora não
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {editorOpen && firebaseUser && profile ? (
+        <div className="session-modal-overlay" role="dialog" aria-modal="true">
+          <div className="session-modal-panel">
+            <div className="session-modal-head">
+              <h2>Editar cadastro</h2>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Fechar"
+                onClick={() => setEditorOpen(false)}
+              >
+                <X aria-hidden="true" />
+              </button>
+            </div>
+            <div className="session-modal-body">
+              <MemberCadastroEditor
+                mode="self"
+                record={profile}
+                highlightMissingRequired={highlightMissing}
+                onSave={async (data) => {
+                  await updateUserRegistrationProfile(firebaseUser.uid, data)
+                }}
+                onCancel={() => setEditorOpen(false)}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </SessionUiContext.Provider>
+  )
+}
+
 function App() {
   const [navigationItems, setNavigationItems] = useState<NavigationItem[]>(defaultNavigationItems)
   const navItems = sortedVisibleNavigationItems(navigationItems)
@@ -674,6 +824,7 @@ function App() {
   useEffect(() => subscribeNavigationItems(setNavigationItems), [])
 
   return (
+    <SessionUiProvider>
     <div className="app-shell">
       <header className="site-header">
         <Link className="brand" to="/">
@@ -776,6 +927,7 @@ function App() {
 
       <SiteFooter />
     </div>
+    </SessionUiProvider>
   )
 }
 
@@ -858,12 +1010,53 @@ function HeaderAccess() {
     )
   }
 
+  return <LoggedHeaderAccount firebaseUser={firebaseUser} profile={profile} navigate={navigate} />
+}
+
+function LoggedHeaderAccount({
+  firebaseUser,
+  profile,
+  navigate,
+}: {
+  firebaseUser: NonNullable<ReturnType<typeof useAuth>['firebaseUser']>
+  profile: UserProfile | null
+  navigate: ReturnType<typeof useNavigate>
+}) {
+  const { openSelfEditor } = useSessionUi()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return
+    }
+
+    function handleOutside(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleOutside)
+    return () => document.removeEventListener('mousedown', handleOutside)
+  }, [menuOpen])
+
   async function handleSignOut() {
+    setMenuOpen(false)
     await signOutUser()
     navigate('/')
   }
 
   const canOpenAdminPanel = hasAdminPanelAccess(profile)
+  const displayName = profile?.nomeCompleto || firebaseUser.email || 'Minha conta'
+  const photoSrc = displayablePhotoSrc(profile?.selfieArquivo)
+  const initials =
+    displayName
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join('') || '?'
 
   return (
     <div className="header-account">
@@ -875,12 +1068,46 @@ function HeaderAccess() {
           <LayoutDashboard aria-hidden="true" />
           Painel Administrativo
         </NavLink>
-      ) : null}
-      <span className="header-account-name">{profile?.nomeCompleto || firebaseUser.email}</span>
-      <button className="login-link" onClick={handleSignOut} type="button">
-        <LogOut aria-hidden="true" />
-        Sair
-      </button>
+      ) : (
+        <NavLink className={({ isActive }) => `panel-link${isActive ? ' active' : ''}`} to={profilePanelPath(profile)}>
+          <LayoutDashboard aria-hidden="true" />
+          Meu painel
+        </NavLink>
+      )}
+
+      <div className="user-menu" ref={menuRef}>
+        <button
+          className="user-menu-trigger"
+          type="button"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((current) => !current)}
+        >
+          <span className="user-avatar">
+            {photoSrc ? <img src={photoSrc} alt="" /> : <span>{initials}</span>}
+          </span>
+          <span className="user-menu-name">{displayName}</span>
+          <ChevronDown className="user-menu-caret" aria-hidden="true" />
+        </button>
+
+        {menuOpen ? (
+          <div className="user-menu-dropdown">
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false)
+                openSelfEditor(false)
+              }}
+            >
+              <Pencil aria-hidden="true" />
+              Editar cadastro
+            </button>
+            <button type="button" onClick={handleSignOut}>
+              <LogOut aria-hidden="true" />
+              Sair
+            </button>
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -1478,9 +1705,9 @@ function LoginPage() {
     setErrorMessage('')
 
     try {
-      const credential = await signIn(email.trim(), senha, rememberLogin)
-      const loggedProfile = await getUserProfile(credential.user.uid)
-      navigate(requestedPath ?? profilePanelPath(loggedProfile), { replace: true })
+      await signIn(email.trim(), senha, rememberLogin)
+      sessionStorage.setItem(JUST_LOGGED_IN_KEY, '1')
+      navigate(requestedPath ?? '/', { replace: true })
     } catch {
       setStatus('error')
       setErrorMessage('Não foi possível entrar. Verifique e-mail e senha.')
@@ -1868,8 +2095,7 @@ function AccessEmailChangeTool({ currentEmail }: { currentEmail: string }) {
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
   const [message, setMessage] = useState('')
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function submitEmailChange() {
     const normalizedEmail = newEmail.trim().toLowerCase()
 
     if (!normalizedEmail || normalizedEmail === currentEmail.trim().toLowerCase()) {
@@ -1900,7 +2126,7 @@ function AccessEmailChangeTool({ currentEmail }: { currentEmail: string }) {
   }
 
   return (
-    <form className="email-change-tool" onSubmit={handleSubmit}>
+    <div className="email-change-tool">
       <div>
         <strong>Trocar e-mail de acesso</strong>
         <p>O e-mail do login não é alterado no cadastro. Para segurança, o novo endereço precisa ser confirmado.</p>
@@ -1915,13 +2141,18 @@ function AccessEmailChangeTool({ currentEmail }: { currentEmail: string }) {
           type="email"
           value={newEmail}
         />
-        <button className="secondary-admin-action" disabled={status === 'sending'} type="submit">
+        <button
+          className="secondary-admin-action"
+          disabled={status === 'sending'}
+          type="button"
+          onClick={submitEmailChange}
+        >
           <Mail aria-hidden="true" />
           {status === 'sending' ? 'Enviando...' : 'Enviar confirmação'}
         </button>
       </div>
       {message ? <div className={`form-alert ${status === 'sent' ? 'success' : 'error'}`}>{message}</div> : null}
-    </form>
+    </div>
   )
 }
 

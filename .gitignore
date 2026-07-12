@@ -15,6 +15,7 @@ dist-ssr
 tmp/
 Backups/
 Tools/
+*.pdf
 
 # Editor directories and files
 .vscode/*
