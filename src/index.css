@@ -4385,3 +4385,155 @@ th {
   height: 1.1rem;
   color: var(--muted);
 }
+
+/* ===== Abas do painel, cartão de membro e sino de notificações ===== */
+.panel-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.panel-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.panel-tabs button svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.panel-tabs button.active {
+  color: #ffffff;
+  border-color: var(--green);
+  background: var(--green);
+}
+
+.member-card-section {
+  display: grid;
+  gap: 1rem;
+}
+
+.member-card-request {
+  display: grid;
+  gap: 0.8rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.member-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.member-card-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.notification-bell {
+  position: relative;
+}
+
+.notification-bell-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.notification-bell-trigger:hover {
+  background: var(--surface-strong);
+}
+
+.notification-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--brick);
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.notification-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.4rem);
+  z-index: 950;
+  width: min(320px, 80vw);
+  max-height: 380px;
+  overflow-y: auto;
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  box-shadow: 0 16px 40px rgba(23, 33, 28, 0.18);
+}
+
+.notification-dropdown-head {
+  padding: 0.4rem 0.5rem;
+  font-weight: 800;
+  color: var(--green-dark);
+  border-bottom: 1px solid var(--line);
+}
+
+.notification-empty {
+  margin: 0;
+  padding: 0.8rem 0.5rem;
+  color: var(--muted);
+}
+
+.notification-item {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.6rem 0.55rem;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+}
+
+.notification-item:hover {
+  background: var(--surface-strong);
+}
+
+.notification-item.unread {
+  background: color-mix(in srgb, var(--gold) 12%, var(--paper));
+}
+
+.notification-item strong {
+  color: var(--ink);
+  font-size: 0.92rem;
+}
+
+.notification-item span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}

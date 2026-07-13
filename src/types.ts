@@ -246,3 +246,33 @@ export type NavigationItem = {
   titleFontSize: number
   titleBold: boolean
 }
+
+export type MemberCardStatus = 'solicitado' | 'emitido'
+
+export type MemberCard = {
+  uid: string
+  nomeCompleto: string
+  congregacao?: string
+  cargo?: string
+  status: MemberCardStatus
+  memberSignature: string
+  memberSignedAt?: FirestoreDate
+  adminSignature?: string
+  adminSignerName?: string
+  adminSignedAt?: FirestoreDate
+  requestedAt?: FirestoreDate
+  correctionNote?: string
+  updatedAt?: FirestoreDate
+}
+
+export type AppNotification = {
+  id: string
+  type: 'card_request' | 'card_correction'
+  title: string
+  message: string
+  audience: 'admin'
+  relatedUid?: string
+  createdAt?: FirestoreDate
+  createdBy?: string
+  readBy?: string[]
+}

@@ -167,5 +167,22 @@ service cloud.firestore {
       allow create: if signedIn() && request.resource.data.actorUid == request.auth.uid;
       allow update, delete: if isAdmin();
     }
+
+    match /memberCards/{cardId} {
+      allow read: if signedIn()
+        && (cardId == request.auth.uid || isDiretoria() || hasAdminSection('membros'));
+      allow create, update: if signedIn()
+        && (
+          (cardId == request.auth.uid && request.resource.data.status == 'solicitado')
+          || hasAdminSection('membros')
+        );
+      allow delete: if hasAdminSection('membros');
+    }
+
+    match /notifications/{notificationId} {
+      allow create: if signedIn();
+      allow read, update: if isDiretoria() || hasAdminSection('membros');
+      allow delete: if isAdmin();
+    }
   }
 }

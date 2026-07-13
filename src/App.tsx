@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   BarChart3,
+  Bell,
   BookOpen,
   CalendarDays,
   Check,
@@ -113,12 +114,14 @@ import {
   upsertVisitRecord,
 } from './services/visitRecords'
 import type {
+  AppNotification,
   Congregation,
   CongregationCategory,
   FirestoreDate,
   ChurchRole,
   AdminSectionKey,
   AuditLog,
+  MemberCard,
   MembershipRequest,
   MembershipRequestStatus,
   NavigationIconKey,
@@ -131,6 +134,17 @@ import type {
   VisitSession,
   VisitPersonType,
 } from './types'
+import {
+  requestMemberCard,
+  signMemberCardAsAdmin,
+  subscribeAllMemberCards,
+  subscribeMemberCard,
+} from './services/memberCards'
+import {
+  createAdminNotification,
+  markNotificationRead,
+  subscribeAdminNotifications,
+} from './services/notifications'
 
 const announcementIcons = {
   flame: Flame,
@@ -1013,6 +1027,82 @@ function HeaderAccess() {
   return <LoggedHeaderAccount firebaseUser={firebaseUser} profile={profile} navigate={navigate} />
 }
 
+function notificationTime(value?: FirestoreDate): number {
+  if (!value) {
+    return 0
+  }
+  if (typeof value === 'string') {
+    return new Date(value).getTime() || 0
+  }
+  const date = value.toDate?.()
+  return date ? date.getTime() : 0
+}
+
+function NotificationBell({ uid }: { uid: string }) {
+  const [notifications, setNotifications] = useState<AppNotification[]>([])
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => subscribeAdminNotifications(setNotifications), [])
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    function handleOutside(event: MouseEvent) {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleOutside)
+    return () => document.removeEventListener('mousedown', handleOutside)
+  }, [open])
+
+  const sorted = [...notifications].sort((a, b) => notificationTime(b.createdAt) - notificationTime(a.createdAt))
+  const unreadCount = sorted.filter((item) => !(item.readBy ?? []).includes(uid)).length
+
+  return (
+    <div className="notification-bell" ref={ref}>
+      <button
+        className="notification-bell-trigger"
+        type="button"
+        aria-label="Notificações"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Bell aria-hidden="true" />
+        {unreadCount > 0 ? <span className="notification-badge">{unreadCount > 9 ? '9+' : unreadCount}</span> : null}
+      </button>
+      {open ? (
+        <div className="notification-dropdown">
+          <div className="notification-dropdown-head">Notificações</div>
+          {sorted.length === 0 ? (
+            <p className="notification-empty">Nenhuma notificação.</p>
+          ) : (
+            sorted.slice(0, 15).map((item) => {
+              const isUnread = !(item.readBy ?? []).includes(uid)
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={isUnread ? 'notification-item unread' : 'notification-item'}
+                  onClick={() => {
+                    if (isUnread) {
+                      void markNotificationRead(item.id, uid)
+                    }
+                  }}
+                >
+                  <strong>{item.title}</strong>
+                  <span>{item.message}</span>
+                </button>
+              )
+            })
+          )}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function LoggedHeaderAccount({
   firebaseUser,
   profile,
@@ -1074,6 +1164,8 @@ function LoggedHeaderAccount({
           Meu painel
         </NavLink>
       )}
+
+      {canOpenAdminPanel ? <NotificationBell uid={firebaseUser.uid} /> : null}
 
       <div className="user-menu" ref={menuRef}>
         <button
@@ -2656,7 +2748,7 @@ function MemberCadastroEditor({
 
 function EnhancedMemberDashboard() {
   const { firebaseUser, profile } = useAuth()
-  const [memberSignature, setMemberSignature] = useState('')
+  const [activeTab, setActiveTab] = useState<'cadastro' | 'cartao'>('cadastro')
 
   useEffect(() => {
     if (!firebaseUser?.email || !profile?.email || firebaseUser.email === profile.email) {
@@ -2672,108 +2764,241 @@ function EnhancedMemberDashboard() {
 
   return (
     <section className="content-section dashboard-page">
-      <DashboardHeader title="Painel do membro" subtitle="Avisos, agenda, campanhas e dados cadastrais" />
-      <div className="card-grid">
-        {[
-          ['Avisos', '2 comunicados ativos', <Megaphone key="avisos" />],
-          ['Agenda', 'Próximos cultos e campanhas', <CalendarDays key="agenda" />],
-          ['Cadastro', 'Dados pessoais e documentos', <FileText key="cadastro" />],
-          ['Cartão de membro', 'Gerar identificação do membro', <ShieldCheck key="cartao" />],
-          ['Fundadores', 'Relação nominal histórica', <UsersRound key="fundadores" />],
-        ].map(([cardTitle, cardText, icon]) => (
-          <article className="info-card" key={String(cardTitle)}>
-            {icon}
-            <h2>{cardTitle}</h2>
-            <p>{cardText}</p>
-          </article>
-        ))}
+      <DashboardHeader title="Meu painel" subtitle="Seu cadastro e seu cartão de membro" />
+
+      <div className="panel-tabs" role="tablist">
+        <button
+          className={activeTab === 'cadastro' ? 'active' : undefined}
+          type="button"
+          onClick={() => setActiveTab('cadastro')}
+        >
+          <FileText aria-hidden="true" />
+          Cadastro
+        </button>
+        <button
+          className={activeTab === 'cartao' ? 'active' : undefined}
+          type="button"
+          onClick={() => setActiveTab('cartao')}
+        >
+          <ShieldCheck aria-hidden="true" />
+          Cartão de membro
+        </button>
       </div>
 
-      <MemberCadastroEditor
-        mode="self"
-        record={profile}
-        onSave={(data) => updateUserRegistrationProfile(firebaseUser.uid, data)}
-      />
-
-      <MemberCardGenerator
-        member={profile}
-        signature={memberSignature}
-        onSignatureChange={setMemberSignature}
-      />
+      {activeTab === 'cadastro' ? (
+        <MemberCadastroEditor
+          mode="self"
+          record={profile}
+          onSave={(data) => updateUserRegistrationProfile(firebaseUser.uid, data)}
+        />
+      ) : (
+        <MemberCardSection profile={profile} uid={firebaseUser.uid} />
+      )}
     </section>
   )
 }
 
-function MemberCardGenerator({
-  member,
-  signature,
-  onSignatureChange,
+function MemberCardSection({ profile, uid }: { profile: UserProfile; uid: string }) {
+  const { openSelfEditor } = useSessionUi()
+  const [card, setCard] = useState<MemberCard | null>(null)
+  const [signature, setSignature] = useState('')
+  const [correctionMode, setCorrectionMode] = useState(false)
+  const [status, setStatus] = useState<'idle' | 'sending' | 'error'>('idle')
+  const [error, setError] = useState('')
+
+  useEffect(() => subscribeMemberCard(uid, setCard), [uid])
+
+  const cargoLabel = profile.possuiCargo
+    ? profile.cargo === 'outro'
+      ? profile.outroCargo || 'Outra função'
+      : (churchRoleOptions.find((role) => role.value === profile.cargo)?.label ?? '')
+    : ''
+
+  const isEmitido = card?.status === 'emitido'
+  const isSolicitado = card?.status === 'solicitado'
+  const showRequestForm = !card || correctionMode
+
+  async function handleRequest() {
+    const trimmed = signature.trim()
+    if (trimmed.split(/\s+/).filter(Boolean).length < 2) {
+      setError('Assine com seu nome completo.')
+      return
+    }
+
+    setStatus('sending')
+    setError('')
+
+    try {
+      const note = correctionMode ? 'Reenvio após correção feita pelo membro.' : ''
+      await requestMemberCard(
+        uid,
+        { nomeCompleto: profile.nomeCompleto, congregacao: profile.congregacao, cargo: cargoLabel },
+        trimmed,
+        note,
+      )
+      await createAdminNotification({
+        type: correctionMode ? 'card_correction' : 'card_request',
+        title: correctionMode ? 'Correção de cartão de membro' : 'Solicitação de cartão de membro',
+        message: `${profile.nomeCompleto} ${correctionMode ? 'reenviou o cartão após correção.' : 'solicitou o cartão de membro.'}`,
+        relatedUid: uid,
+        createdBy: uid,
+      })
+      setSignature('')
+      setCorrectionMode(false)
+      setStatus('idle')
+    } catch {
+      setStatus('error')
+      setError('Não foi possível enviar a solicitação. Tente novamente.')
+    }
+  }
+
+  return (
+    <section className="member-card-section">
+      <div className="section-heading">
+        <p className="eyebrow">Cartão de membro</p>
+        <h2>Seu cartão de identificação</h2>
+        <p>Solicite o cartão, acompanhe a assinatura da administração e visualize seu cartão de membro.</p>
+      </div>
+
+      {isSolicitado ? (
+        <div className="form-alert warning">
+          <Hourglass aria-hidden="true" />
+          Cartão solicitado. Aguardando a conferência e a assinatura da administração.
+        </div>
+      ) : null}
+      {isEmitido ? (
+        <div className="form-alert success">
+          <CheckCircle2 aria-hidden="true" />
+          Cartão emitido e assinado pela administração.
+        </div>
+      ) : null}
+
+      <MemberCardView
+        profile={profile}
+        memberSignature={
+          showRequestForm
+            ? signature || profile.nomeCompleto
+            : card?.memberSignature || profile.nomeCompleto
+        }
+        adminSignerName={isEmitido ? card?.adminSignerName || institutionalInfo.president : ''}
+      />
+
+      {showRequestForm ? (
+        <div className="member-card-request">
+          {correctionMode ? (
+            <p className="field-hint">
+              Se o erro é nos seus dados, use{' '}
+              <button className="link-button" type="button" onClick={() => openSelfEditor(false)}>
+                Editar cadastro
+              </button>{' '}
+              antes de reenviar. Depois assine novamente para enviar à administração.
+            </p>
+          ) : null}
+          <label className="wide-field">
+            Assinatura eletrônica do membro
+            <span className="required-hint">Campo obrigatório</span>
+            <input
+              value={signature}
+              onChange={(event) => {
+                setSignature(event.target.value)
+                setError('')
+              }}
+              placeholder="Digite seu nome completo como assinatura"
+            />
+          </label>
+          <div className="member-card-actions">
+            <button className="primary-action" type="button" disabled={status === 'sending'} onClick={handleRequest}>
+              <ShieldCheck aria-hidden="true" />
+              {status === 'sending' ? 'Enviando...' : correctionMode ? 'Reenviar cartão' : 'Solicitar cartão'}
+            </button>
+            {correctionMode ? (
+              <button className="secondary-admin-action" type="button" onClick={() => setCorrectionMode(false)}>
+                <X aria-hidden="true" />
+                Cancelar
+              </button>
+            ) : null}
+          </div>
+          {error ? <div className="form-alert error">{error}</div> : null}
+        </div>
+      ) : null}
+
+      {isEmitido ? (
+        <div className="member-card-actions">
+          <button className="secondary-admin-action" type="button" onClick={() => openSelfEditor(false)}>
+            <Pencil aria-hidden="true" />
+            Editar cadastro
+          </button>
+          <button
+            className="secondary-admin-action"
+            type="button"
+            onClick={() => {
+              setCorrectionMode(true)
+              setSignature('')
+            }}
+          >
+            <Info aria-hidden="true" />
+            Solicitar correção
+          </button>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function MemberCardView({
+  profile,
+  memberSignature,
+  adminSignerName,
 }: {
-  member: UserProfile
-  signature: string
-  onSignatureChange: (value: string) => void
+  profile: UserProfile
+  memberSignature: string
+  adminSignerName: string
 }) {
   const [congregationList, setCongregationList] = useState<Congregation[]>(fallbackCongregations)
-  const initials = member.nomeCompleto
+  const initials = profile.nomeCompleto
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
     .join('')
-  const congregationName = congregationDisplayName(member.congregacao, congregationList) || 'Congregação não informada'
+  const congregationName = congregationDisplayName(profile.congregacao, congregationList) || 'Congregação não informada'
+  const photoSrc = displayablePhotoSrc(profile.selfieArquivo)
 
   useEffect(() => subscribeCongregations(setCongregationList), [])
 
   return (
-    <section className="member-card-generator">
-      <div className="section-heading">
-        <p className="eyebrow">Cartão de membro</p>
-        <h2>Gerar cartão de identificação</h2>
-        <p>Prévia do cartão com os dados do cadastro. A versão com QR Code, impressão e foto real entra quando o armazenamento de imagens estiver ativo.</p>
+    <article className="member-card-preview">
+      <div className="member-card-brand">
+        <img src="/images/ieadtrr-logo.jpeg" alt="" />
+        <div>
+          <strong>IEADTRR</strong>
+          <span>Cartão de membro</span>
+        </div>
       </div>
 
-      <label className="wide-field member-signature-input">
-        Assinatura eletrônica do membro
-        <input
-          onChange={(event) => onSignatureChange(event.target.value)}
-          placeholder="Digite seu nome como assinatura"
-          value={signature}
-        />
-      </label>
-
-      <article className="member-card-preview">
-        <div className="member-card-brand">
-          <img src="/images/ieadtrr-logo.jpeg" alt="" />
-          <div>
-            <strong>IEADTRR</strong>
-            <span>Cartão de membro</span>
-          </div>
+      <div className="member-card-body">
+        <div className={photoSrc ? 'member-card-photo has-photo' : 'member-card-photo'}>
+          {photoSrc ? <img src={photoSrc} alt="" /> : initials || 'M'}
         </div>
-
-        <div className="member-card-body">
-          <div className={member.selfieArquivo ? 'member-card-photo has-photo' : 'member-card-photo'}>
-            {member.selfieArquivo ? 'Selfie' : initials || 'M'}
-          </div>
-          <div>
-            <h3>{member.nomeCompleto}</h3>
-            <p>{congregationName}</p>
-            <span>CPF: {member.cpf || 'Não informado'}</span>
-            <span>Batismo: {formatDateKey(member.dataBatismo)}</span>
-          </div>
+        <div>
+          <h3>{profile.nomeCompleto}</h3>
+          <p>{congregationName}</p>
+          <span>CPF: {profile.cpf || 'Não informado'}</span>
+          <span>Batismo: {formatDateKey(profile.dataBatismo)}</span>
         </div>
+      </div>
 
-        <div className="member-card-signatures">
-          <div>
-            <strong>{institutionalInfo.president}</strong>
-            <span>Assinatura eletrônica do Pastor Presidente</span>
-          </div>
-          <div>
-            <strong>{signature || member.nomeCompleto}</strong>
-            <span>Assinatura eletrônica do membro</span>
-          </div>
+      <div className="member-card-signatures">
+        <div>
+          <strong>{adminSignerName || '—'}</strong>
+          <span>Assinatura da administração</span>
         </div>
-      </article>
-    </section>
+        <div>
+          <strong>{memberSignature || profile.nomeCompleto}</strong>
+          <span>Assinatura eletrônica do membro</span>
+        </div>
+      </div>
+    </article>
   )
 }
 
@@ -4453,7 +4678,7 @@ function auditChangedFields(before: Record<string, unknown>, after: Record<strin
 }
 
 function MembersAdminSection() {
-  const [activeTab, setActiveTab] = useState<'cadastro' | 'progressao'>('cadastro')
+  const [activeTab, setActiveTab] = useState<'cadastro' | 'progressao' | 'cartoes'>('cadastro')
 
   return (
     <div className="members-admin-section">
@@ -4476,10 +4701,113 @@ function MembersAdminSection() {
         >
           Progressão espiritual
         </button>
+        <button
+          aria-selected={activeTab === 'cartoes'}
+          className={activeTab === 'cartoes' ? 'active' : undefined}
+          onClick={() => setActiveTab('cartoes')}
+          role="tab"
+          type="button"
+        >
+          Cartões de membro
+        </button>
       </div>
 
-      {activeTab === 'cadastro' ? <MemberDirectory /> : <ProfileProgressionManager />}
+      {activeTab === 'cadastro' ? (
+        <MemberDirectory />
+      ) : activeTab === 'progressao' ? (
+        <ProfileProgressionManager />
+      ) : (
+        <MemberCardsAdminPanel />
+      )}
     </div>
+  )
+}
+
+function MemberCardsAdminPanel() {
+  const { profile } = useAuth()
+  const [cards, setCards] = useState<MemberCard[]>([])
+  const [signature, setSignature] = useState('')
+  const [busyUid, setBusyUid] = useState<string | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => subscribeAllMemberCards(setCards), [])
+
+  const pending = cards
+    .filter((card) => card.status === 'solicitado')
+    .sort((a, b) => notificationTime(b.requestedAt) - notificationTime(a.requestedAt))
+  const issuedCount = cards.filter((card) => card.status === 'emitido').length
+
+  async function handleSign(card: MemberCard) {
+    const signer = signature.trim() || profile?.nomeCompleto || 'Administração'
+    setBusyUid(card.uid)
+    setError('')
+
+    try {
+      await signMemberCardAsAdmin(card.uid, signer, signer)
+    } catch {
+      setError('Não foi possível assinar o cartão. Tente novamente.')
+    } finally {
+      setBusyUid(null)
+    }
+  }
+
+  return (
+    <section className="admin-panel-block">
+      <div className="section-heading">
+        <p className="eyebrow">Cartões de membro</p>
+        <h2>Solicitações de cartão</h2>
+        <p>Confira os dados e assine o cartão. Depois de assinado, ele fica disponível no painel do membro.</p>
+      </div>
+
+      <label className="wide-field">
+        Sua assinatura (administração)
+        <input
+          value={signature}
+          onChange={(event) => setSignature(event.target.value)}
+          placeholder={profile?.nomeCompleto || 'Seu nome'}
+        />
+      </label>
+
+      {error ? <div className="form-alert error">{error}</div> : null}
+
+      {pending.length === 0 ? (
+        <p className="source-note">Nenhuma solicitação de cartão pendente.</p>
+      ) : (
+        <div className="request-list">
+          {pending.map((card) => (
+            <article className="request-card" key={card.uid}>
+              <div className="request-main">
+                <div className="request-head">
+                  <strong>{card.nomeCompleto}</strong>
+                  <span className="status-badge status-pendente">solicitado</span>
+                </div>
+                <div className="request-meta">
+                  <span>{card.congregacao || 'Congregação não informada'}</span>
+                  <span>{card.cargo || 'Sem cargo'}</span>
+                </div>
+                <div className="request-contact">
+                  <span>Assinatura do membro: {card.memberSignature}</span>
+                  {card.correctionNote ? <span>{card.correctionNote}</span> : null}
+                </div>
+              </div>
+              <div className="request-actions">
+                <button
+                  className="approve-btn"
+                  type="button"
+                  disabled={busyUid === card.uid}
+                  onClick={() => handleSign(card)}
+                >
+                  <Check aria-hidden="true" />
+                  Assinar cartão
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {issuedCount > 0 ? <p className="source-note">{issuedCount} cartão(ões) já emitido(s).</p> : null}
+    </section>
   )
 }
 
