@@ -1696,8 +1696,6 @@ function LoginPage() {
   const [status, setStatus] = useState<'idle' | 'sending' | 'reset-sent' | 'error'>('idle')
   const [errorMessage, setErrorMessage] = useState('')
   const navigate = useNavigate()
-  const location = useLocation()
-  const requestedPath = (location.state as { from?: string } | null)?.from
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -1707,7 +1705,7 @@ function LoginPage() {
     try {
       await signIn(email.trim(), senha, rememberLogin)
       sessionStorage.setItem(JUST_LOGGED_IN_KEY, '1')
-      navigate(requestedPath ?? '/', { replace: true })
+      navigate('/', { replace: true })
     } catch {
       setStatus('error')
       setErrorMessage('Não foi possível entrar. Verifique e-mail e senha.')
